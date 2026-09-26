@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scout-agent"
+version = "0.1.0"
+description = "Read-only local job scout screening prototype"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.60,<2",
+  "google-genai>=1,<2",
+  "python-dotenv>=1,<2",
+  "pydantic>=2,<3",
+  "Jinja2>=3,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+include = ["scout_agent*"]
+
+[tool.setuptools.package-data]
+"scout_agent" = ["report/templates/*.j2", "prompts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

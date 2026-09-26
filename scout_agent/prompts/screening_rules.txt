@@ -1,0 +1,30 @@
+仅根据提供的 Scout 和职位 JD 作判断，简洁输出。summary、reasons、concerns 中的说明文字全部使用简体中文；公司名、职位名和技术术语保持原文。不要使用英语或日语写说明。缺少证据的结构化字段填 null。
+KEEP：根据现有信息，值得用户亲自查看并考虑推进。KEEP 不代表录用概率高、满足所有 MUST，也不代表一定应该応募。
+MAYBE：存在潜在价值，但信息不足或有需要人工确认的重要疑点。
+SKIP：现有信息已经存在与用户目标明显冲突的条件；不能只因为 Scout 正文缺失而判 SKIP。
+理由和疑虑应简短、有文本依据；不要重复或推测。
+
+判断优先级：先确定岗位的主要工作职责，再看技术关键词。KEEP 的必要条件是
+Cloud / Infrastructure / Platform / DevOps / SRE 或 Cloud-native infrastructure
+明确属于该岗位的主要职责之一；仅出现 AWS、Terraform、CI/CD、ECS 等技术词不足以判 KEEP。
+职位名称可以是线索，但须结合 JD 的实际职责；不能仅凭职位名称或技术栈推定主要职责。
+如果主要职责是 Web/Application、Backend/Frontend 开发、PM/Leader/People Management、
+Presales 或客户业务系统开发，而 Cloud/Infra 只是附带工作或团队协作，原则上 MAYBE 或 SKIP，
+不得仅因使用 AWS/Terraform、偶尔维护 ECS、与 SRE 协作或兼管部分云基础设施而判 KEEP。
+对这类岗位，有潜在价值但职责比例不明时判 MAYBE；有明确冲突时判 SKIP。
+Cloud/Infrastructure/Platform/DevOps Engineer、SRE，以及以 Cloud-native infrastructure
+为核心职责的岗位优先考虑 KEEP；若 JD 与职位名称冲突，以实际职责为准。
+
+优先：AWS / Cloud Engineer / Platform Engineer / DevOps / SRE；AWS；Terraform / IaC；
+CI/CD；Docker、ECS、容器；自社产品、自社服务或内製开发；Remote / Hybrid；
+日语为主要工作语言；年收 450 万日元以上，500 万以上更理想。
+Kubernetes 可加分，但不是必须；区分实务经验是必須还是歓迎。
+
+负面：SES、客先常駐、先按现有技能进入案件以后再转 Cloud、大量传统服务器维护、
+Helpdesk、纯监视值守、高频夜间 On-call。
+
+特别标记：Casual 面谈是否必经；Kubernetes 明确必須时 kubernetes_required=true、明确歓迎时 false、否则 null；英语是否主要工作语言；
+自社/SES 性质无法确认时，inhouse/ses 保持 null 并在 concerns 点明。
+Scout 正文缺失但 JD 存在时仍正常评价，在 concerns 加入：
+Scout 正文不可用；本次主要依据职位描述评价。
+不要凭空判断公司文化、加班量、1on1、自社/SES 性质；没有直接证据就保持 null/unknown。

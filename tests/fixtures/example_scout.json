@@ -1,0 +1,11 @@
+{
+  "id": "fictional-001",
+  "company_name": "架空クラウド工房株式会社",
+  "job_title": "AWS Platform Engineer",
+  "scout_title": "クラウド基盤チームへのご案内",
+  "scout_text": "自社サービスのクラウド基盤を内製するチームです。AWS と Terraform を使います。",
+  "jd_text": "AWS、Terraform、CI/CD、Docker、ECS を使用。日本語で業務を進めます。週2日リモート可。Kubernetes は歓迎条件です。",
+  "salary_text": "年収500万円〜700万円",
+  "location_text": "東京都 / ハイブリッド",
+  "url": "https://example.com/fictional-scout-001"
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Job Scout 筛选报告</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    article { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .KEEP { border-left: 6px solid #27824a; } .MAYBE { border-left: 6px solid #c58a19; } .SKIP { border-left: 6px solid #999; }
+  </style>
+</head>
+<body>
+  <h1>Job Scout 筛选报告</h1>
+  <p>生成时间：{{ generated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+  <p>Evaluation model: {{ evaluation_model }}</p>
+  <p>新增 Scout：{{ results|length }} · KEEP：{{ counts.KEEP }} · MAYBE：{{ counts.MAYBE }} · SKIP：{{ counts.SKIP }}</p>
+  {% for scout, evaluation, metadata in results %}
+  <article class="{{ evaluation.verdict }}">
+    <h2>{{ scout.job_title or scout.scout_title or '未提供职位名称' }}</h2>
+    <p>平台：{{ scout.platform }} · 公司：{{ scout.company_name or '未提供' }} · 薪资：{{ scout.salary_text or '未提供' }}</p>
+    <p>Classifier/model: {{ metadata.provider if metadata else 'unknown' }} / {{ metadata.model_name if metadata else 'unknown' }}</p>
+    <p><strong>{{ evaluation.verdict }}</strong> · confidence {{ '%.2f'|format(evaluation.confidence) }} · {{ evaluation.summary }}</p>
+    <h3>理由</h3><ul>{% for reason in evaluation.reasons %}<li>{{ reason }}</li>{% else %}<li>暂无</li>{% endfor %}</ul>
+    <h3>疑虑</h3><ul>{% for concern in evaluation.concerns %}<li>{{ concern }}</li>{% else %}<li>暂无</li>{% endfor %}</ul>
+    {% if safe_url(scout.url) %}<p><a href="{{ safe_url(scout.url) }}" rel="noopener noreferrer">打开原始 Scout</a></p>{% endif %}
+  </article>
+  {% endfor %}
+</body>
+</html>
