@@ -8,4 +8,12 @@
 - KEEP requires evidence that Cloud/Infrastructure/Platform/DevOps/SRE is one of the job's main responsibilities. Keywords such as AWS/Terraform/CI/CD alone are insufficient. Missing evidence should remain unknown or MAYBE, not be invented.
 - Explanatory evaluation fields (`summary`, `reasons`, `concerns`) use Simplified Chinese, preserving company names, job titles, and technical terms in their original language.
 
-Next platform priority: 1. type; 2. doda; 3. マイナビ転職; 4. Forkwell; 5. LAPRAS. No new platform adapter is part of this checkpoint.
+## Implementation and verification workflow
+
+- For code changes that require verification, the main Agent implements the change. By default, delegate verification to a subagent: pytest, static checks, CLI smoke tests, and read-only database checks as appropriate. The main Agent waits for the subagent's results, analyzes them, and fixes any failures itself; it may delegate verification again afterward.
+- Verification subagents must not call real paid LLMs, modify real Scout data or evaluations, or perform recruitment-site write actions. Use mocks and fictional fixtures for tests. Any database inspection of real data must be read-only and avoid exposing private Scout content.
+- Do not ask the user to run tests or verification commands manually. Ask for user action only when it is genuinely required, such as manual login, OAuth, CAPTCHA, or another step only the user can perform.
+- The final user report should be brief and cover only: what changed, test results, real-world verification results, unresolved issues, and the recommended next step. The main Agent summarizes the subagent's verification results rather than forwarding raw logs.
+- A verification subagent must return evidence, not merely "passed": (1) the exact command run; (2) exit code; (3) the pytest summary line, including passed/failed/skipped/xfailed/warnings when present; (4) test files or test names directly related to the change; (5) key output for any warning, skip, or failure; (6) whether it accessed a real browser, real database, real recruitment site, or paid model; and (7) key stdout from any CLI smoke test. Explicitly say "none" or "not run" for inapplicable items. The main Agent must retain these facts in its concise final summary rather than reducing them to "tests passed".
+
+Platform order: type (implemented), then doda, マイナビ転職, Forkwell, LAPRAS. Do not infer selectors for remaining platforms; inspect their authenticated DOM before implementation.

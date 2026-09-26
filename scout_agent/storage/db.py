@@ -52,6 +52,31 @@ class Database:
                 model_name TEXT NOT NULL DEFAULT 'unknown',
                 evaluated_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS type_list_items (
+                external_id TEXT PRIMARY KEY,
+                company_name TEXT,
+                job_title TEXT,
+                received_on TEXT,
+                received_at TEXT,
+                url TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'title_skip', 'completed', 'legacy_seen')),
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS scan_audit (
+                id INTEGER PRIMARY KEY,
+                scan_run_id INTEGER NOT NULL REFERENCES scan_runs(id),
+                platform TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                company TEXT,
+                job_title TEXT,
+                decision TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                detail_fetched INTEGER NOT NULL DEFAULT 0,
+                already_seen INTEGER NOT NULL DEFAULT 0,
+                received_on TEXT,
+                received_at TEXT,
+                UNIQUE(scan_run_id, external_id)
+            );
         """)
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(evaluations)")}
         if "provider" not in columns:
@@ -83,6 +108,73 @@ class Database:
             "WHERE s.platform=? AND s.dedupe_key=?",
             (scout.platform, scout.dedupe_key),
         ).fetchone() is not None
+
+    def type_list_status(self, external_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT status FROM type_list_items WHERE external_id=?", (external_id,)
+        ).fetchone()
+        return str(row["status"]) if row else None
+
+    def save_type_list_item(
+        self, *, external_id: str, company_name: str | None, job_title: str | None,
+        received_on: str | None, received_at: str | None, url: str, status: str,
+    ) -> None:
+        if status not in {"pending", "title_skip", "completed", "legacy_seen"}:
+            raise ValueError("Invalid type list status")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO type_list_items "
+            "(external_id,company_name,job_title,received_on,received_at,url,status,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (external_id, company_name, job_title, received_on, received_at, url,
+             status, datetime.now().isoformat()),
+        )
+        self.conn.commit()
+
+    def finish_type_list_item(self, external_id: str) -> None:
+        self.conn.execute(
+            "UPDATE type_list_items SET status='completed' WHERE external_id=? AND status='pending'",
+            (external_id,),
+        )
+        self.conn.commit()
+
+    def skip_type_list_item(self, external_id: str) -> None:
+        self.conn.execute(
+            "UPDATE type_list_items SET status='title_skip' WHERE external_id=? AND status='pending'",
+            (external_id,),
+        )
+        self.conn.commit()
+
+    def save_scan_audit(
+        self, *, scan_run_id: int, platform: str, external_id: str,
+        company: str | None, job_title: str | None, decision: str, reason: str,
+        already_seen: bool, received_on: str | None, received_at: str | None,
+        detail_fetched: bool = False,
+    ) -> None:
+        self.conn.execute(
+            "INSERT INTO scan_audit "
+            "(scan_run_id,platform,external_id,company,job_title,decision,reason,"
+            "detail_fetched,already_seen,received_on,received_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (scan_run_id, platform, external_id, company, job_title, decision,
+             reason, int(detail_fetched), int(already_seen), received_on, received_at),
+        )
+        self.conn.commit()
+
+    def mark_scan_audit_detail(self, scan_run_id: int, list_external_id: str, job_external_id: str) -> None:
+        self.conn.execute(
+            "UPDATE scan_audit SET detail_fetched=1, external_id=? "
+            "WHERE scan_run_id=? AND external_id=?",
+            (job_external_id, scan_run_id, list_external_id),
+        )
+        self.conn.commit()
+
+    def get_scan_audit(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT scan_run_id,platform,external_id,company,job_title,decision,reason,"
+            "detail_fetched,already_seen,received_on,received_at "
+            "FROM scan_audit WHERE scan_run_id=? ORDER BY id", (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def save_scout(self, scout: Scout) -> int:
         self.conn.execute(

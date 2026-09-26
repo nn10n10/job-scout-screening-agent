@@ -1,6 +1,6 @@
-# Job Scout Screening Agent V0.3
+# Job Scout Screening Agent
 
-这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green` 可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell、LAPRAS、doda、type 的网页适配器尚未实现。不会自动登录、応募或发送消息。
+这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green` 和 `type` 可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell、LAPRAS、doda 等网页适配器尚未实现。不会自动登录、応募或发送消息。
 
 ## 架构
 
@@ -123,9 +123,21 @@ python -m scout_agent scan --platform green
 
 Green 一览页是 `https://www.green-japan.com/messages/v2`。适配器从实际列表链接的 `threadId` 取得去重 ID；最多读取最近 30 条 Scout，遇到已处理 ID 即停止。只有新条目才会导航到消息详情与其中链接的职位页；新条目按显式选择的 provider 分类。已有 Scout 可用离线 `evaluate --platform green --replace-provider mock` 定向重评，无需再次访问 Green，也不会覆盖现有 Codex 评价。正文或接收时间在多消息线程中无法唯一对应时保存为 `null`；页面上没有可靠主题字段，因此 `scout_title` 也为 `null`。
 
+## type 只读扫描
+
+在专用 Chrome 中手工登录 type。首次验证建议临时用 MockClassifier，避免消耗 Codex 额度且不改动 `.env`：
+
+```bash
+CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform type
+```
+
+type 一览页为 `https://type.jp/scout/`。第一阶段只读列表，默认最多检查 100 条可见 message（`LIST_SCAN_LIMIT=100`），逐个独立职位标题做 `TITLE_SKIP`、`TITLE_REVIEW`、`DETAIL` 三档本地预筛。明显非 IT/非 Cloud-Infra 的职种直接跳过；Backend、社内 SE、Consulting、Security 等相邻岗位进入复核；Cloud/Infra/SRE 等明确相关或 `ITエンジニア`、`SE` 等泛化标题进入详情。同一 offer 已有明确核心岗位时，其泛化/相邻岗位可因 offer 上下文跳过。多个“還元率／案件選択制／単価連動”等案件信号可排除泛化 IT/SE/开发标题，但含 Cloud/クラウド、Infra/インフラ、SRE、DevOps、Platform、AWS、Network/ネットワーク、Server/サーバー 等目标信号的职位仍进入详情；SES/客先常駐风险只在读取 JD 后按明确证据做本地 hard rule 判断。列表没有可靠时刻，`received_on` 保存日期，`received_at` 保持 `null`。默认跳过超过 14 天的记录（`SCOUT_MAX_AGE_DAYS=14`）；连续 30 个已处理 message ID 才提前停止（`SEEN_STOP_THRESHOLD=30`）。当前观察到的列表没有分页控件，不追溯完整历史。
+
+第二阶段仅为新候选打开 message 详情，通过已观察到的职位链接文本对应列表标题，只读取保留职位的职位页/JD；无法可靠匹配的链接保守读取，避免误跳过。独立 job ID 用 `offer/message ID + job ID` 保存为独立 Scout，不拼接不同 JD。只有真正送进 classifier 的 Scout 才消耗模型额度；已处理 message 不打开详情且为 0 token。每次扫描的 `scan_audit` 表逐职位保存 run ID、平台、external ID、公司、标题、决定、原因、是否读取详情和已见状态；列表阶段尚无 job ID 时使用明确的 `message ID:list:序号` 临时 ID，详情确认后换成 job ID。报告会列出列表、已见、三档预筛、详情和 KEEP/MAYBE/SKIP 计数。详情页只导航读取，新打开的详情可能自然变为已读；不会主动点击标记已读、応募、收藏或发送消息。`scout_kind` 可依据已观察到的详情链接区分；无明确依据时 `sender_kind`、`is_bulk_like` 为 `null`。
+
 ## 扩展其他 Adapter
 
-`forkwell`、`lapras`、`doda`、`type` 仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。
+`forkwell`、`lapras`、`doda` 仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。
 
 ## 安全与隐私
 

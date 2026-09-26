@@ -22,6 +22,9 @@ class Settings:
     codex_model: str | None = None
     codex_reasoning_effort: str | None = "low"
     codex_batch_size: int = 8
+    list_scan_limit: int = 100
+    scout_max_age_days: int = 14
+    seen_stop_threshold: int = 30
 
     @property
     def db_path(self) -> Path:
@@ -54,6 +57,14 @@ def load_settings(root: Path = PROJECT_ROOT) -> Settings:
         raise ValueError("CODEX_BATCH_SIZE must be a positive integer") from exc
     if codex_batch_size < 1:
         raise ValueError("CODEX_BATCH_SIZE must be a positive integer")
+    def positive_setting(name: str, default: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a positive integer") from exc
+        if value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+        return value
     return Settings(
         root=root,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
@@ -64,4 +75,7 @@ def load_settings(root: Path = PROJECT_ROOT) -> Settings:
         codex_model=(os.getenv("CODEX_MODEL") or "").strip() or None,
         codex_reasoning_effort=(os.getenv("CODEX_REASONING_EFFORT", "low")).strip() or None,
         codex_batch_size=codex_batch_size,
+        list_scan_limit=positive_setting("LIST_SCAN_LIMIT", 100),
+        scout_max_age_days=positive_setting("SCOUT_MAX_AGE_DAYS", 14),
+        seen_stop_threshold=positive_setting("SEEN_STOP_THRESHOLD", 30),
     )

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 import sys
 import time
+from zoneinfo import ZoneInfo
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -13,7 +15,9 @@ from scout_agent.llm.base import MISSING_MESSAGE_CONCERN, validate_explanations
 from scout_agent.llm.gemini import GeminiClassifier
 from scout_agent.llm.mock import MockClassifier
 from scout_agent.models.scout import Scout
+from scout_agent.models.evaluation import Evaluation
 from scout_agent.platforms import ADAPTERS
+from scout_agent.platforms.type_jp import prefilter_jobs, prefilter_title, type_post_detail_hard_rule
 from scout_agent.report.generator import generate_report
 from scout_agent.storage.db import Database
 
@@ -53,6 +57,11 @@ def _positive_int(value: str) -> int:
     if number < 1:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return number
+
+
+def _type_list_job_id(external_id: str, index: int) -> str:
+    # type's list has message IDs and job titles, but exposes job IDs only on detail links.
+    return f"{external_id}:list:{index + 1}"
 
 
 def _classify(classifier, scout: Scout):
@@ -238,8 +247,188 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         adapter = ADAPTERS[args.platform]()
-        if args.platform not in {"generic", "green"}:
+        if args.platform not in {"generic", "green", "type"}:
             print("Adapter not implemented yet.")
+            return 0
+        if args.platform == "type":
+            if settings.browser_mode != "cdp":
+                print("type scanning requires BROWSER_MODE=cdp.", file=sys.stderr)
+                return 2
+            try:
+                manager = BrowserManager(
+                    settings.profile_path, mode="cdp", cdp_endpoint=settings.cdp_endpoint,
+                )
+                with manager.open() as session:
+                    if not session.contexts:
+                        raise RuntimeError("Chrome has no browser context")
+                    page = session.contexts[0].new_page()
+                    try:
+                        page.goto(adapter.scout_list_url, wait_until="domcontentloaded", timeout=15000)
+                        if not adapter.is_logged_in(page):
+                            raise RuntimeError("type is not logged in; log in manually in Chrome first")
+                        refs = adapter.get_scout_list(page, limit=settings.list_scan_limit)
+                        print(f"type list entries: {len(refs)} (limit {settings.list_scan_limit})", flush=True)
+                        run_id = db.start_run(args.platform)
+                        stats = {key: 0 for key in (
+                            "list_scanned", "already_seen", "already_seen_jobs", "TITLE_SKIP",
+                            "TITLE_REVIEW", "DETAIL", "title_skipped", "detail_fetched",
+                            "job_details_fetched", "locally_skipped", "sent_to_classifier",
+                            "too_old", "unknown_date",
+                        )}
+                        consecutive_seen = 0
+                        today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+                        cutoff = today - timedelta(days=settings.scout_max_age_days)
+                        pending_ids = {
+                            ref.external_id for ref in refs
+                            if ref.received_on is not None and ref.received_on >= cutoff
+                            and db.type_list_status(ref.external_id) == "pending"
+                        }
+                        candidates = []
+                        try:
+                            # Phase 1: list-only discovery. No detail page is opened here.
+                            for ref in refs:
+                                stats["list_scanned"] += 1
+                                status = db.type_list_status(ref.external_id)
+                                legacy_seen = status is None and db.is_seen(
+                                    Scout(id=ref.external_id, platform="type")
+                                )
+                                seen = status in {"completed", "title_skip", "legacy_seen"} or legacy_seen
+                                decisions = prefilter_jobs(ref.job_titles)
+                                for index, item in enumerate(decisions):
+                                    stats[item.decision] += 1
+                                    if item.decision == "TITLE_SKIP":
+                                        stats["title_skipped"] += 1
+                                    db.save_scan_audit(
+                                        scan_run_id=run_id, platform="type",
+                                        external_id=_type_list_job_id(ref.external_id, index),
+                                        company=ref.company_name,
+                                        job_title=ref.job_titles[index] if ref.job_titles else None,
+                                        decision=item.decision, reason=item.reason,
+                                        already_seen=seen,
+                                        received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                        received_at=None,
+                                    )
+                                if ref.received_on is None:
+                                    stats["unknown_date"] += 1
+                                    consecutive_seen = 0
+                                    continue
+                                if ref.received_on < cutoff:
+                                    stats["too_old"] += 1
+                                    consecutive_seen = 0
+                                    continue
+                                pending_ids.discard(ref.external_id)
+                                if seen:
+                                    if legacy_seen:
+                                        db.save_type_list_item(
+                                            external_id=ref.external_id, company_name=ref.company_name,
+                                            job_title=ref.job_title or " / ".join(ref.job_titles) or None,
+                                            received_on=ref.received_on.isoformat(), received_at=None,
+                                            url=ref.url, status="legacy_seen",
+                                        )
+                                    stats["already_seen"] += 1
+                                    consecutive_seen += 1
+                                    if consecutive_seen >= settings.seen_stop_threshold and not pending_ids:
+                                        break
+                                    continue
+                                consecutive_seen = 0
+                                all_skipped = all(item.decision == "TITLE_SKIP" for item in decisions)
+                                if status is None:
+                                    db.save_type_list_item(
+                                        external_id=ref.external_id, company_name=ref.company_name,
+                                        job_title=ref.job_title or " / ".join(ref.job_titles) or None,
+                                        received_on=ref.received_on.isoformat(),
+                                        received_at=None, url=ref.url,
+                                        status="title_skip" if all_skipped else "pending",
+                                    )
+                                elif all_skipped:
+                                    db.skip_type_list_item(ref.external_id)
+                                if all_skipped:
+                                    continue
+                                candidates.append((ref, {
+                                    index for index, item in enumerate(decisions)
+                                    if item.decision != "TITLE_SKIP"
+                                }))
+
+                            # Phase 2: only new/pending candidates get detail/JD and classification.
+                            print(f"type detail candidates: {len(candidates)}", flush=True)
+                            classifier = None
+                            for ref, include_indices in candidates:
+                                raw_jobs = adapter.get_scout_detail(
+                                    page, ref, include_indices=include_indices,
+                                )
+                                stats["detail_fetched"] += 1
+                                print(f"type detail fetched: {stats['detail_fetched']}", flush=True)
+                                for raw in raw_jobs:
+                                    scout = adapter.normalize_scout(raw)
+                                    list_index = raw.get("_list_index")
+                                    if list_index is not None and 0 <= list_index < len(ref.job_titles or ("",)):
+                                        db.mark_scan_audit_detail(
+                                            run_id, _type_list_job_id(ref.external_id, list_index),
+                                            scout.id or _type_list_job_id(ref.external_id, list_index),
+                                        )
+                                    else:
+                                        db.save_scan_audit(
+                                            scan_run_id=run_id, platform="type",
+                                            external_id=scout.id or ref.external_id,
+                                            company=scout.company_name, job_title=scout.job_title,
+                                            decision="DETAIL",
+                                            reason="详情职位无法可靠匹配列表标题，保守读取。",
+                                            already_seen=db.is_seen(scout),
+                                            received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                            received_at=None, detail_fetched=True,
+                                        )
+                                        stats["DETAIL"] += 1
+                                    stats["job_details_fetched"] += 1
+                                    if db.is_seen(scout):
+                                        stats["already_seen_jobs"] += 1
+                                        continue
+                                    evaluation = type_post_detail_hard_rule(scout)
+                                    if evaluation is None and prefilter_title(scout.job_title).decision == "TITLE_SKIP":
+                                        evaluation = Evaluation(
+                                            verdict="SKIP", confidence=0.9,
+                                            summary="职位标题明确不属于 IT 或 Cloud/Infrastructure 方向。",
+                                            reasons=[], concerns=["仅按明确的职位标题做本地排除。"],
+                                        )
+                                    if evaluation is not None:
+                                        scout_id = db.save_scout(scout)
+                                        db.save_evaluation(
+                                            scout_id, run_id, evaluation,
+                                            provider="local", model_name="type-hard-rule",
+                                        )
+                                        stats["locally_skipped"] += 1
+                                        continue
+                                    if classifier is None:
+                                        classifier = _classifier(settings)
+                                    evaluation = _classify(classifier, scout)
+                                    scout_id = db.save_scout(scout)
+                                    db.save_evaluation(
+                                        scout_id, run_id, evaluation,
+                                        provider=classifier.provider, model_name=classifier.model_name,
+                                    )
+                                    stats["sent_to_classifier"] += 1
+                                db.finish_type_list_item(ref.external_id)
+                            db.finish_run(run_id)
+                        except Exception as exc:
+                            db.finish_run(run_id, error=type(exc).__name__)
+                            raise
+                    finally:
+                        page.close()
+            except CDPConnectionError as exc:
+                print(exc, file=sys.stderr)
+                return 1
+            _, results = db.get_recent_results(run_id)
+            html, json_path = generate_report(
+                settings.output_path, results, scan_stats=stats,
+                model_name=_configured_model_name(settings),
+            )
+            for key, value in stats.items():
+                print(f"{key}: {value}")
+            verdicts = {key: sum(evaluation.verdict == key for _, evaluation, _ in results)
+                        for key in ("KEEP", "MAYBE", "SKIP")}
+            print(" ".join(f"{key}: {value}" for key, value in verdicts.items()))
+            print(f"New scouts: {len(results)}")
+            print(f"HTML report: {html}")
+            print(f"JSON report: {json_path}")
             return 0
         if args.platform == "green":
             if settings.browser_mode != "cdp":

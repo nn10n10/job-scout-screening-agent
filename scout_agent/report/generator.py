@@ -24,6 +24,7 @@ def generate_report(
     *,
     generated_at: datetime | None = None,
     model_name: str | None = None,
+    scan_stats: dict[str, int] | None = None,
 ) -> tuple[Path, Path]:
     generated_at = generated_at or datetime.now()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -50,6 +51,7 @@ def generate_report(
     html = env.get_template("report.html.j2").render(
         generated_at=generated_at, counts=counts, results=ordered,
         evaluation_model=evaluation_model,
+        scan_stats=scan_stats,
         safe_url=_safe_url,
     )
     html_path.write_text(html, encoding="utf-8")
@@ -58,6 +60,7 @@ def generate_report(
         "new_scouts": len(ordered),
         "evaluation_model": evaluation_model,
         "counts": counts,
+        "scan_stats": {**(scan_stats or {}), **counts} if scan_stats is not None else None,
         "results": [
             {
                 "scout": scout.model_dump(mode="json"),
