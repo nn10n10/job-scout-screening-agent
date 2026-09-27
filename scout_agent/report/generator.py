@@ -25,6 +25,7 @@ def generate_report(
     generated_at: datetime | None = None,
     model_name: str | None = None,
     scan_stats: dict[str, int] | None = None,
+    detail_local_skips: list[dict[str, str | None]] | None = None,
 ) -> tuple[Path, Path]:
     generated_at = generated_at or datetime.now()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,7 @@ def generate_report(
         generated_at=generated_at, counts=counts, results=ordered,
         evaluation_model=evaluation_model,
         scan_stats=scan_stats,
+        detail_local_skips=detail_local_skips or [],
         safe_url=_safe_url,
     )
     html_path.write_text(html, encoding="utf-8")
@@ -61,6 +63,7 @@ def generate_report(
         "evaluation_model": evaluation_model,
         "counts": counts,
         "scan_stats": {**(scan_stats or {}), **counts} if scan_stats is not None else None,
+        "detail_local_skips": detail_local_skips or [],
         "results": [
             {
                 "scout": scout.model_dump(mode="json"),

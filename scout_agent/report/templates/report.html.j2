@@ -14,7 +14,11 @@
   <p>生成时间：{{ generated_at.strftime('%Y-%m-%d %H:%M') }}</p>
   <p>Evaluation model: {{ evaluation_model }}</p>
   <p>新增 Scout：{{ results|length }} · KEEP：{{ counts.KEEP }} · MAYBE：{{ counts.MAYBE }} · SKIP：{{ counts.SKIP }}</p>
-  {% if scan_stats %}<p>列表扫描：{{ scan_stats.list_scanned }} · 已存在：{{ scan_stats.already_seen }} · TITLE_SKIP：{{ scan_stats.TITLE_SKIP|default(scan_stats.title_skipped) }} · TITLE_REVIEW：{{ scan_stats.TITLE_REVIEW|default(0) }} · DETAIL：{{ scan_stats.DETAIL|default(0) }} · 详情读取：{{ scan_stats.detail_fetched }} · 本地跳过：{{ scan_stats.locally_skipped }} · 送入分类器：{{ scan_stats.sent_to_classifier }}</p>{% endif %}
+  {% if scan_stats %}<p>列表扫描：{{ scan_stats.list_scanned }} · 已存在：{{ scan_stats.already_seen }} · TITLE_SKIP：{{ scan_stats.TITLE_SKIP|default(scan_stats.title_skipped) }} · TITLE_REVIEW：{{ scan_stats.TITLE_REVIEW|default(0) }} · DETAIL：{{ scan_stats.DETAIL|default(0) }} · 详情读取：{{ scan_stats.detail_fetched }} · DETAIL_LOCAL_SKIP：{{ scan_stats.DETAIL_LOCAL_SKIP|default(0) }} · 本地跳过：{{ scan_stats.locally_skipped }} · 送入分类器：{{ scan_stats.sent_to_classifier }}</p>{% endif %}
+  {% if detail_local_skips %}
+  <h2>详情本地排除（DETAIL_LOCAL_SKIP）</h2>
+  <ul>{% for item in detail_local_skips %}<li>{{ item.company or '未提供公司' }} — {{ item.job_title or '未提供职位标题' }}：{{ item.reason }}</li>{% endfor %}</ul>
+  {% endif %}
   {% for scout, evaluation, metadata in results %}
   <article class="{{ evaluation.verdict }}">
     <h2>{{ scout.job_title or scout.scout_title or '未提供职位名称' }}</h2>

@@ -1,6 +1,6 @@
 # Job Scout Screening Agent
 
-这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green` 和 `type` 可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell、LAPRAS、doda 等网页适配器尚未实现。不会自动登录、応募或发送消息。
+这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell、LAPRAS 等网页适配器尚未实现。不会自动登录、応募或发送消息。
 
 ## 架构
 
@@ -135,9 +135,32 @@ type 一览页为 `https://type.jp/scout/`。第一阶段只读列表，默认�
 
 第二阶段仅为新候选打开 message 详情，通过已观察到的职位链接文本对应列表标题，只读取保留职位的职位页/JD；无法可靠匹配的链接保守读取，避免误跳过。独立 job ID 用 `offer/message ID + job ID` 保存为独立 Scout，不拼接不同 JD。只有真正送进 classifier 的 Scout 才消耗模型额度；已处理 message 不打开详情且为 0 token。每次扫描的 `scan_audit` 表逐职位保存 run ID、平台、external ID、公司、标题、决定、原因、是否读取详情和已见状态；列表阶段尚无 job ID 时使用明确的 `message ID:list:序号` 临时 ID，详情确认后换成 job ID。报告会列出列表、已见、三档预筛、详情和 KEEP/MAYBE/SKIP 计数。详情页只导航读取，新打开的详情可能自然变为已读；不会主动点击标记已读、応募、收藏或发送消息。`scout_kind` 可依据已观察到的详情链接区分；无明确依据时 `sender_kind`、`is_bulk_like` 为 `null`。
 
+## doda 企业オファー只读扫描
+
+在专用 Chrome 中手工登录 doda；首次扫描用 MockClassifier，避免消耗付费模型额度：
+
+```bash
+CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform doda
+```
+
+实际入口是 `https://doda.jp/dcfront/referredJob/interviewOfferList/`，不是公开的 `/scout/` 介绍页。扫描用只读 GET `?sort_id=1` 选择「受信日が新しい順」；网站默认 `sort_id=7` 是「マッチ順」。列表每张企业オファー卡片提供 `message_id` 和独立 `jid`；去重键是两者组合。最多读取最近 100 个职位，先用列表标题做 `TITLE_SKIP`／`TITLE_REVIEW`／`DETAIL` 预筛；只有候选才打开オファー详情和关联 JD。列表的宣传标题不一定等于实际职位名称，详情读取后会以 JD 的 `occupationName` 更新 audit。详情后的 `DETAIL_LOCAL_SKIP` 只使用真实职位标题和结构化 JD 主职责，在 hard rule/classifier 前以 0 token 排除明确非目标职种，以及明确以 Application/Web/System、組込/モビリティ、QA/Test、Helpdesk/技术支持或 IT 业务支援为主的岗位；泛化 IT 标题在职责仍不明确时保留。明确的 Cloud/Infra/Platform/SRE/DevOps 目标岗位不会因 SES 宣传词在这一步被排除。报告和 `scan_audit` 分别记录排除数量、公司、真实职位标题与原因，并保留原始 `list_title` 供复核。14 天年龄限制优先依据网站显示的「受信日から N 日経過」；列表只显示応募截止时间时，到详情复核接收年龄，仍无法确认年龄就不分类。连续 30 个已处理 ID 且没有待续跑条目时可提前停止。所有标题跳过和详情结果都记入 SQLite 与逐次 `scan_audit`，第二次扫描不重复分类。
+
+目前只支持已观察到的「企業からのオファー」。可确认 `sender_kind=company`，带明确「プレミアムオファー」标签时记为 `premium_offer`；`is_bulk_like` 没有可靠证据时为 `null`。「パートナーエージェントからのスカウト」页面当前无可观察条目，暂不猜测其 DOM。详情导航可能自然变为已读，但不会主动执行已读、応募、收藏或其他账号操作。
+
+已有完整 JD 的 doda Scout 可离线重新应用当前详情预筛与 hard rule，无需再次访问招聘网站或调用模型。先只读预览，再写入本地决定：
+
+```bash
+python -m scout_agent reprocess --platform doda --dry-run
+python -m scout_agent reprocess --platform doda
+python -m scout_agent evaluate --platform doda --eligible-only --replace-provider mock --dry-run
+python -m scout_agent evaluate --platform doda --eligible-only --replace-provider mock
+```
+
+`reprocess` 只处理 SQLite 中已有非空 JD 的 Scout。`local_skip` 会更新原 Mock/legacy/local evaluation 为 `provider=local`，但不会覆盖 Codex/Gemini 结果；`classifier_candidate` 只记录资格，不改变已有 evaluation。`evaluate --eligible-only` 只读取这批候选，须显式指定平台，并继续遵守现有的 `--force`／`--replace-provider` 语义；推荐用 `--replace-provider mock` 精确替换历史 Mock 结果。`--dry-run` 不修改 SQLite，也不生成报告。
+
 ## 扩展其他 Adapter
 
-`forkwell`、`lapras`、`doda` 仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。
+`forkwell`、`lapras` 等仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。
 
 ## 安全与隐私
 
