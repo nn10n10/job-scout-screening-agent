@@ -72,6 +72,17 @@ class Database:
                 status TEXT NOT NULL CHECK(status IN ('pending', 'title_skip', 'completed', 'too_old')),
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS mynavi_list_items (
+                external_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                delivery_id TEXT NOT NULL,
+                company_name TEXT,
+                scout_title TEXT,
+                received_on TEXT,
+                url TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'title_skip', 'completed', 'too_old')),
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS scan_audit (
                 id INTEGER PRIMARY KEY,
                 scan_run_id INTEGER NOT NULL REFERENCES scan_runs(id),
@@ -188,6 +199,43 @@ class Database:
             )
         }
 
+    def mynavi_list_status(self, external_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT status FROM mynavi_list_items WHERE external_id=?", (external_id,)
+        ).fetchone()
+        return str(row["status"]) if row else None
+
+    def save_mynavi_list_item(
+        self, *, external_id: str, job_id: str, delivery_id: str,
+        company_name: str | None, scout_title: str | None,
+        received_on: str | None, url: str, status: str,
+    ) -> None:
+        if status not in {"pending", "title_skip", "completed", "too_old"}:
+            raise ValueError("Invalid マイナビ list status")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO mynavi_list_items "
+            "(external_id,job_id,delivery_id,company_name,scout_title,received_on,url,status,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (external_id, job_id, delivery_id, company_name, scout_title,
+             received_on, url, status, datetime.now().isoformat()),
+        )
+        self.conn.commit()
+
+    def set_mynavi_list_status(self, external_id: str, status: str) -> None:
+        if status not in {"pending", "title_skip", "completed", "too_old"}:
+            raise ValueError("Invalid マイナビ list status")
+        self.conn.execute(
+            "UPDATE mynavi_list_items SET status=? WHERE external_id=?", (status, external_id)
+        )
+        self.conn.commit()
+
+    def mynavi_pending_ids(self) -> set[str]:
+        return {
+            str(row["external_id"]) for row in self.conn.execute(
+                "SELECT external_id FROM mynavi_list_items WHERE status='pending'"
+            )
+        }
+
     def save_type_list_item(
         self, *, external_id: str, company_name: str | None, job_title: str | None,
         received_on: str | None, received_at: str | None, url: str, status: str,
@@ -255,6 +303,18 @@ class Database:
         )
         if cursor.rowcount != 1:
             raise ValueError("No fetched detail audit row for local skip")
+        self.conn.commit()
+
+    def mark_scan_audit_detail_error(
+        self, scan_run_id: int, external_id: str, reason: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            "UPDATE scan_audit SET detail_decision='DETAIL_ERROR', detail_reason=? "
+            "WHERE scan_run_id=? AND external_id=? AND detail_fetched=0",
+            (reason, scan_run_id, external_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("No pending detail audit row for error")
         self.conn.commit()
 
     def get_scan_audit(self, run_id: int) -> list[dict[str, Any]]:

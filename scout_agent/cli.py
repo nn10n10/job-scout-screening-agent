@@ -288,8 +288,200 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         adapter = ADAPTERS[args.platform]()
-        if args.platform not in {"generic", "green", "type", "doda"}:
+        if args.platform not in {"generic", "green", "type", "doda", "mynavi"}:
             print("Adapter not implemented yet.")
+            return 0
+        if args.platform == "mynavi":
+            if settings.browser_mode != "cdp":
+                print("マイナビ scanning requires BROWSER_MODE=cdp.", file=sys.stderr)
+                return 2
+            manager = BrowserManager(
+                settings.profile_path, mode="cdp", cdp_endpoint=settings.cdp_endpoint,
+            )
+            try:
+                with manager.open() as session:
+                    if not session.contexts:
+                        raise RuntimeError("Chrome has no browser context")
+                    page = session.contexts[0].new_page()
+                    try:
+                        page.goto(adapter.scout_list_url, wait_until="commit", timeout=30000)
+                        page.get_by_role(
+                            "heading", name="企業からのスカウト受信一覧"
+                        ).wait_for(timeout=10000)
+                        if not adapter.is_logged_in(page):
+                            raise RuntimeError("マイナビ転職 is not logged in; log in manually in Chrome first")
+                        run_id = db.start_run("mynavi")
+                        stats = {key: 0 for key in (
+                            "list_scanned", "already_seen", "TITLE_SKIP", "TITLE_REVIEW", "DETAIL",
+                            "detail_fetched", "detail_failed", "DETAIL_LOCAL_SKIP", "locally_skipped",
+                            "sent_to_classifier", "too_old", "unknown_date",
+                        )}
+                        pending_ids = db.mynavi_pending_ids()
+                        consecutive_seen = 0
+                        candidates = []
+                        today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+                        try:
+                            # The observed list contains a Scout subject, not an
+                            # independent job title. Unknown titles conservatively
+                            # become DETAIL; never prefilter on marketing copy.
+                            for ref in adapter.iter_scout_list(page, limit=settings.list_scan_limit):
+                                stats["list_scanned"] += 1
+                                status = db.mynavi_list_status(ref.external_id)
+                                legacy_seen = status is None and db.is_seen(
+                                    Scout(id=ref.external_id, platform="mynavi")
+                                )
+                                seen = status in {"title_skip", "completed", "too_old"} or legacy_seen
+                                decision = prefilter_title(ref.job_title)
+                                stats[decision.decision] += 1
+                                db.save_scan_audit(
+                                    scan_run_id=run_id, platform="mynavi",
+                                    external_id=ref.external_id,
+                                    company=ref.company_name, job_title=ref.job_title,
+                                    list_title=ref.scout_title,
+                                    decision=decision.decision, reason=decision.reason,
+                                    already_seen=seen,
+                                    received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                    received_at=None,
+                                )
+                                if seen:
+                                    stats["already_seen"] += 1
+                                    consecutive_seen += 1
+                                    if legacy_seen:
+                                        db.save_mynavi_list_item(
+                                            external_id=ref.external_id, job_id=ref.job_id,
+                                            delivery_id=ref.delivery_id,
+                                            company_name=ref.company_name,
+                                            scout_title=ref.scout_title,
+                                            received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                            url=ref.url, status="completed",
+                                        )
+                                    if consecutive_seen >= settings.seen_stop_threshold and not pending_ids:
+                                        break
+                                    continue
+                                consecutive_seen = 0
+                                pending_ids.discard(ref.external_id)
+                                age_days = (today - ref.received_on).days if ref.received_on else None
+                                if age_days is not None and age_days > settings.scout_max_age_days:
+                                    stats["too_old"] += 1
+                                    if status is None:
+                                        db.save_mynavi_list_item(
+                                            external_id=ref.external_id, job_id=ref.job_id,
+                                            delivery_id=ref.delivery_id,
+                                            company_name=ref.company_name,
+                                            scout_title=ref.scout_title,
+                                            received_on=ref.received_on.isoformat(),
+                                            url=ref.url, status="too_old",
+                                        )
+                                    else:
+                                        db.set_mynavi_list_status(ref.external_id, "too_old")
+                                    continue
+                                if age_days is None:
+                                    stats["unknown_date"] += 1
+                                if decision.decision == "TITLE_SKIP":
+                                    if status is None:
+                                        db.save_mynavi_list_item(
+                                            external_id=ref.external_id, job_id=ref.job_id,
+                                            delivery_id=ref.delivery_id,
+                                            company_name=ref.company_name,
+                                            scout_title=ref.scout_title,
+                                            received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                            url=ref.url, status="title_skip",
+                                        )
+                                    else:
+                                        db.set_mynavi_list_status(ref.external_id, "title_skip")
+                                    continue
+                                if status is None:
+                                    db.save_mynavi_list_item(
+                                        external_id=ref.external_id, job_id=ref.job_id,
+                                        delivery_id=ref.delivery_id,
+                                        company_name=ref.company_name,
+                                        scout_title=ref.scout_title,
+                                        received_on=ref.received_on.isoformat() if ref.received_on else None,
+                                        url=ref.url, status="pending",
+                                    )
+                                candidates.append(ref)
+
+                            print(f"マイナビ detail candidates: {len(candidates)}", flush=True)
+                            classifier = None
+                            for ref in candidates:
+                                try:
+                                    raw_jobs = adapter.get_scout_detail(
+                                        page, ref, max_age_days=settings.scout_max_age_days,
+                                    )
+                                except PlaywrightError as exc:
+                                    # A slow/failed detail remains pending for the
+                                    # next scan. Never fabricate an Evaluation.
+                                    stats["detail_failed"] += 1
+                                    db.mark_scan_audit_detail_error(
+                                        run_id, ref.external_id,
+                                        f"详情读取失败（{type(exc).__name__}）；保留待续扫。",
+                                    )
+                                    continue
+                                stats["detail_fetched"] += 1
+                                if not raw_jobs:
+                                    stats["too_old"] += 1
+                                    db.mark_scan_audit_detail(run_id, ref.external_id, ref.external_id)
+                                    db.set_mynavi_list_status(ref.external_id, "too_old")
+                                    continue
+                                for raw in raw_jobs:
+                                    scout = adapter.normalize_scout(raw)
+                                    db.mark_scan_audit_detail(
+                                        run_id, ref.external_id, scout.id,
+                                        company=scout.company_name, job_title=scout.job_title,
+                                    )
+                                    if db.is_seen(scout):
+                                        db.set_mynavi_list_status(ref.external_id, "completed")
+                                        continue
+                                    scout_id = db.save_scout(scout)
+                                    local = reprocess_stored_scout(scout)
+                                    db.save_local_reprocess_result(scout_id, "mynavi", run_id, local)
+                                    if local.decision == "local_skip":
+                                        if local.model_name == "mynavi-detail-prefilter":
+                                            db.mark_scan_audit_detail_local_skip(
+                                                run_id, scout.id, local.reason,
+                                            )
+                                            stats["DETAIL_LOCAL_SKIP"] += 1
+                                        stats["locally_skipped"] += 1
+                                    else:
+                                        if classifier is None:
+                                            classifier = _classifier(settings)
+                                        evaluation = _classify(classifier, scout)
+                                        db.save_evaluation(
+                                            scout_id, run_id, evaluation,
+                                            provider=classifier.provider,
+                                            model_name=classifier.model_name,
+                                        )
+                                        stats["sent_to_classifier"] += 1
+                                    db.set_mynavi_list_status(ref.external_id, "completed")
+                            db.finish_run(run_id)
+                        except Exception as exc:
+                            db.finish_run(run_id, error=type(exc).__name__)
+                            raise
+                    finally:
+                        page.close()
+            except CDPConnectionError as exc:
+                print(exc, file=sys.stderr)
+                return 1
+            _, results = db.get_recent_results(run_id)
+            detail_local_skips = [
+                {"company": row["company"], "job_title": row["job_title"],
+                 "reason": row["detail_reason"]}
+                for row in db.get_scan_audit(run_id)
+                if row["detail_decision"] == "DETAIL_LOCAL_SKIP"
+            ]
+            html, json_path = generate_report(
+                settings.output_path, results, scan_stats=stats,
+                model_name=_configured_model_name(settings),
+                detail_local_skips=detail_local_skips,
+            )
+            for key, value in stats.items():
+                print(f"{key}: {value}")
+            verdicts = {key: sum(evaluation.verdict == key for _, evaluation, _ in results)
+                        for key in ("KEEP", "MAYBE", "SKIP")}
+            print(" ".join(f"{key}: {value}" for key, value in verdicts.items()))
+            print(f"New scouts: {len(results)}")
+            print(f"HTML report: {html}")
+            print(f"JSON report: {json_path}")
             return 0
         if args.platform == "doda":
             if settings.browser_mode != "cdp":

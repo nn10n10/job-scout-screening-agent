@@ -158,6 +158,18 @@ python -m scout_agent evaluate --platform doda --eligible-only --replace-provide
 
 `reprocess` 只处理 SQLite 中已有非空 JD 的 Scout。`local_skip` 会更新原 Mock/legacy/local evaluation 为 `provider=local`，但不会覆盖 Codex/Gemini 结果；`classifier_candidate` 只记录资格，不改变已有 evaluation。`evaluate --eligible-only` 只读取这批候选，须显式指定平台，并继续遵守现有的 `--force`／`--replace-provider` 语义；推荐用 `--replace-provider mock` 精确替换历史 Mock 结果。`--dry-run` 不修改 SQLite，也不生成报告。
 
+## マイナビ転職 企业 Scout 只读扫描
+
+专用 Chrome 中手工登录后，首次验证使用 MockClassifier：
+
+```bash
+CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform mynavi
+```
+
+已观察到的企业 Scout 一览入口是 `https://tenshoku.mynavi.jp/scout/messages/`；网站分页链接使用 `order=2` 按最新接收顺序显示，每页 20 条。每条卡片提供接收日期、企业名、Scout 私信标题，以及指向一个 `jobinfo-...` 职位的链接。链接中的 `deliveryId` 与 `jobinfo-...` 职位 ID 共同形成去重键；若一张卡片以后出现多个独立职位链接，将逐职位拆分。列表没有独立的真实职位标题，因此不会把营销性质的私信标题误当职位标题做 `TITLE_SKIP`；标题未知时保守进入 `DETAIL`。详情页的职位名称、仕事内容、要求、薪资和地点用于本地 `DETAIL_LOCAL_SKIP`、hard rule 与后续 classifier。
+
+扫描默认最多检查最近 100 个职位、只处理最近 14 天；连续 30 个已处理 ID 且无待续扫记录可提前停止。`scan_audit` 逐职位保存列表决定、详情决定、原因与是否读取详情；本地排除为 0 token，已处理职位不会再次分类。候选资格也保存在 SQLite，可供以后 `evaluate --platform mynavi --eligible-only --replace-provider mock` 精确重评。当前只实现页面明确标为「企業からのスカウト受信一覧」的企业列表；另有「転職エージェントからのスカウト」入口，但未将其混入企业列表。是否属于人工直邀或自动群发没有可靠 DOM 证据时为 unknown（`is_bulk_like=null`）。详情导航可能自然变为已读；程序不会主动标记已读、応募、キープ或辞退。
+
 ## 扩展其他 Adapter
 
 `forkwell`、`lapras` 等仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。
