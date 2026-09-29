@@ -18,6 +18,8 @@ def dashboard_scope(filters: DashboardFilters) -> DashboardScope:
     period = "全部时间" if filters.days == "all" else f"最近{filters.days}天"
     platform = "All platforms" if filters.platform == "All" else filters.platform
     labels = (filters.provider, verdict, period, platform)
+    if filters.tier != "All":
+        labels += (f"Tier {filters.tier}",)
     if filters.q:
         labels += (f"关键词：{filters.q}",)
     return DashboardScope(
@@ -35,8 +37,11 @@ class EvaluationCard:
     company: str | None
     job_title: str | None
     salary: str | None
+    salary_display: str
     location: str | None
     remote_evidence: str | None
+    annual_holidays: int | None
+    priority_tier: str | None
     provider: str
     evaluated_at: str
     received_date: str | None
@@ -56,8 +61,12 @@ class EvaluationDetail:
     reasons: tuple[str, ...]
     concerns: tuple[str, ...]
     salary: str | None
+    salary_display: str
     location: str | None
     remote_evidence: str | None
+    annual_holidays: int | None
+    priority_tier: str | None
+    priority_evidence: str | None
     provider: str
     model_name: str
     evaluated_at: str
@@ -86,12 +95,41 @@ def _safe_detail_url(url: str | None) -> str | None:
 
 
 def _remote_evidence(result: StoredEvaluation) -> str | None:
+    if result.priority is not None:
+        return {
+            "FULL_REMOTE": "Full Remote",
+            "REMOTE_4_PLUS": "每周至少4天",
+            "REMOTE_3": "每周至少3天",
+            "REMOTE_1_2": "每周1–2天",
+            "REMOTE_OCCASIONAL": "偶尔 Remote",
+            "REMOTE_RANGE": "频率范围，最低不足3天",
+            "REMOTE_UNKNOWN": "可 Remote，频率不明",
+            "ONSITE": "明确出社",
+            "UNKNOWN": "不明",
+        }[result.priority.remote_level]
     evidence = []
     if result.evaluation.remote is True:
         evidence.append("Remote")
     if result.evaluation.hybrid is True:
         evidence.append("Hybrid")
     return " / ".join(evidence) or None
+
+
+def _salary_display(result: StoredEvaluation) -> str:
+    priority = result.priority
+    if priority is not None:
+        low, high = priority.salary_min, priority.salary_max
+        if low is not None and high is not None:
+            if low == high:
+                return f"年収 {low // 10_000} 万円"
+            return f"年収 {low // 10_000}–{high // 10_000} 万円"
+        if low is not None:
+            return f"年収 {low // 10_000} 万円以上"
+        if high is not None:
+            return f"年収 {high // 10_000} 万円以下"
+    if result.salary:
+        return _preview(result.salary.splitlines()[0], 75)
+    return "不明"
 
 
 def _preview(value: str, limit: int) -> str:
@@ -108,8 +146,11 @@ def evaluation_cards(results: list[StoredEvaluation]) -> list[EvaluationCard]:
             company=result.company,
             job_title=result.job_title,
             salary=result.salary,
+            salary_display=_salary_display(result),
             location=result.location,
             remote_evidence=_remote_evidence(result),
+            annual_holidays=result.priority.annual_holidays if result.priority else None,
+            priority_tier=result.priority.priority_tier if result.priority else None,
             provider=result.provider,
             evaluated_at=result.evaluated_at.strftime("%Y-%m-%d %H:%M"),
             received_date=result.received_date[:10] if result.received_date else None,
@@ -132,8 +173,12 @@ def evaluation_detail(result: StoredEvaluation) -> EvaluationDetail:
         reasons=tuple(result.evaluation.reasons),
         concerns=tuple(result.evaluation.concerns),
         salary=result.salary,
+        salary_display=_salary_display(result),
         location=result.location,
         remote_evidence=_remote_evidence(result),
+        annual_holidays=result.priority.annual_holidays if result.priority else None,
+        priority_tier=result.priority.priority_tier if result.priority else None,
+        priority_evidence=result.priority.priority_evidence if result.priority else None,
         provider=result.provider,
         model_name=result.model_name,
         evaluated_at=result.evaluated_at.isoformat(sep=" ", timespec="seconds"),

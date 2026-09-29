@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from .services import (
-    DAY_RANGES, PLATFORMS, PROVIDERS, VERDICTS, DashboardFilters,
+    DAY_RANGES, PLATFORMS, PROVIDERS, TIER_OPTIONS, VERDICTS, DashboardFilters,
     get_evaluation, search_evaluations, summarize_evaluations,
 )
 from .viewmodels import dashboard_scope, evaluation_cards, evaluation_detail
@@ -23,10 +23,11 @@ PRIVATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"
 def index(
     request: Request, q: str = "", platform: str = "All",
     verdict: str = "KEEP,MAYBE", provider: str = "Final", days: str = "7",
+    tier: str = "All",
 ) -> HTMLResponse:
     try:
         filters = DashboardFilters(
-            q=q, platform=platform, verdict=verdict, provider=provider, days=days,
+            q=q, platform=platform, verdict=verdict, provider=provider, days=days, tier=tier,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -41,6 +42,7 @@ def index(
             "summary": summary, "scope": dashboard_scope(filters),
             "platform_options": PLATFORMS, "verdict_options": VERDICTS,
             "provider_options": PROVIDERS, "day_options": DAY_RANGES,
+            "tier_options": TIER_OPTIONS,
         },
         headers=PRIVATE_HEADERS,
     )

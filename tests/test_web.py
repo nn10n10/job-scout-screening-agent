@@ -36,7 +36,10 @@ def _seed_dashboard(tmp_path):
                 id=external_id, platform=platform, company_name=company,
                 job_title=title, salary_text=salary, location_text=location,
                 url=url, scout_text="FICTIONAL PRIVATE SCOUT MESSAGE",
-                jd_text="FICTIONAL PRIVATE JOB DESCRIPTION",
+                jd_text=("Webアプリケーション開発が主な業務。" if external_id == "web"
+                         else "jobContentOutline: SRE として SLO の改善と監視基盤の自動化を担当。"
+                         if external_id == "sre" else
+                         "AWS 基盤の設計・構築を担当。自社内勤務。 FICTIONAL PRIVATE JOB DESCRIPTION"),
                 received_on=(now - timedelta(days=age_days)).date(),
             ))
             db.save_evaluation(
@@ -80,8 +83,8 @@ def test_web_default_shows_recent_keep_maybe_not_skip_and_stays_read_only(tmp_pa
     assert "Platform Engineer" not in html  # Default excludes Mock evaluations.
     assert "Web Engineer" not in html  # Default excludes SKIP.
     assert "Legacy Cloud" not in html  # Default excludes Scouts received over seven days ago.
-    assert "年収500万円" in html and "东京" not in html and "東京" in html
-    assert "远程：Remote" in html
+    assert "年収 500 万円" in html and "东京" not in html and "東京" in html
+    assert "远程：不明" in html  # No JD frequency; old classifier bool is not tier evidence.
     assert "codex" in html and "测试/非正式评价" not in html
     assert 'value="Final" selected' in html
     assert "虚构Cloud Engineer岗位" in html
@@ -97,6 +100,48 @@ def test_web_default_shows_recent_keep_maybe_not_skip_and_stays_read_only(tmp_pa
     assert str(db_path) not in html
     with Database(db_path, read_only=True) as db:
         assert db.conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 5
+
+
+def test_web_final_hides_mandatory_casual_but_explicit_provider_keeps_history(tmp_path):
+    db_path, _ = _seed_dashboard(tmp_path)
+    with Database(db_path) as db:
+        run_id = db.start_run("fictional-workflow-test")
+        mandatory_id = db.save_scout(Scout(
+            id="mandatory-casual", platform="green", company_name="架空必经社",
+            job_title="Mandatory Cloud Engineer",
+            jd_text="AWS 基盤の設計・構築を主担当。\n選考プロセス\n"
+                    "カジュアル面談⇒適性検査⇒面接",
+            received_on=datetime.now().date(),
+        ))
+        optional_id = db.save_scout(Scout(
+            id="optional-casual", platform="green", company_name="架空可选社",
+            job_title="Optional Cloud Engineer",
+            jd_text="AWS 基盤の設計・構築を主担当。カジュアル面談歓迎。",
+            received_on=datetime.now().date(),
+        ))
+        for scout_id in (mandatory_id, optional_id):
+            db.save_evaluation(
+                scout_id, run_id,
+                Evaluation(verdict="KEEP", confidence=0.9, summary="虚构云基盘岗位。"),
+                provider="codex", model_name="fictional-codex",
+            )
+        db.finish_run(run_id)
+    with TestClient(create_app(db_path)) as client:
+        final = client.get("/")
+        assert final.status_code == 200
+        assert "Mandatory Cloud Engineer" not in final.text
+        assert "Optional Cloud Engineer" in final.text
+        assert '<strong id="summary-total">3</strong>' in final.text
+        history = client.get("/?provider=codex")
+        assert history.status_code == 200
+        assert "Mandatory Cloud Engineer" in history.text
+        assert client.get(f"/jobs/{mandatory_id}").status_code == 200
+    with Database(db_path, read_only=True) as db:
+        row = db.conn.execute(
+            "SELECT provider,json_extract(payload,'$.verdict') AS verdict "
+            "FROM evaluations WHERE scout_id=?", (mandatory_id,),
+        ).fetchone()
+        assert (row["provider"], row["verdict"]) == ("codex", "KEEP")
 
 
 def test_web_verdict_and_platform_filters(tmp_path):
@@ -149,8 +194,8 @@ def test_web_date_filter_and_limit_apply_in_sql(tmp_path):
         thirty = client.get("/?days=30")
         assert "Legacy Cloud" in thirty.text
 
-    # If the implementation fetched the newest 100 rows before filtering,
-    # these 101 newer SKIPs would hide the older KEEP incorrectly.
+    # The 100-row SQL limit applies after Final tier ranking; an eligible KEEP
+    # must remain above untiered local SKIPs even when there are 101 of them.
     with Database(db_path) as db:
         run_id = db.start_run("fictional-limit-test")
         for index in range(101):
@@ -171,7 +216,7 @@ def test_web_date_filter_and_limit_apply_in_sql(tmp_path):
         assert "Skip 100" not in client.get("/").text
         all_results = client.get("/?verdict=All&days=all")
         assert "显示 100 条" in all_results.text
-        assert "Cloud Engineer" not in all_results.text
+        assert "Cloud Engineer" in all_results.text
         assert '<strong id="summary-total">105</strong>' in all_results.text
 
 
@@ -226,6 +271,7 @@ def test_web_recent_received_date_not_recent_evaluation_and_excludes_generic(tmp
         old_id = db.save_scout(Scout(
             id="old-revalued", platform="type", company_name="架空历史社",
             job_title="Historical Cloud Engineer",
+            jd_text="AWS 基盤の設計・構築を担当。自社内勤務。",
             received_on=(datetime.now() - timedelta(days=40)).date(),
         ))
         db.save_evaluation(old_id, run_id, Evaluation(
@@ -326,6 +372,7 @@ def test_web_final_includes_future_real_classifier_provider(tmp_path):
         scout_id = db.save_scout(Scout(
             id="future-provider", platform="type", company_name="架空Future社",
             job_title="Future Cloud Engineer", received_on=datetime.now().date(),
+            jd_text="AWS 基盤の設計・構築を担当。自社内勤務。",
         ))
         db.save_evaluation(scout_id, run_id, Evaluation(
             verdict="MAYBE", confidence=0.7, summary="虚构结果。",
@@ -334,6 +381,156 @@ def test_web_final_includes_future_real_classifier_provider(tmp_path):
     with TestClient(create_app(db_path)) as client:
         assert "Future Cloud Engineer" in client.get("/").text
         assert "Future Cloud Engineer" not in client.get("/?provider=codex").text
+
+
+def test_web_final_uses_current_local_rules_without_replacing_historical_codex(tmp_path):
+    """An old paid verdict remains auditable but is not a current Final hit."""
+    from scout_agent.web.services import DashboardFilters, search_evaluations, summarize_evaluations
+
+    db_path = tmp_path / "fictional-scouts.db"
+    examples = (
+        ("target", "Cloud Engineer", "AWS 基盤の設計・構築を担当。自社内勤務。", None),
+        ("application", "ITエンジニア", "Webアプリケーション開発が主な業務。", None),
+        ("client-site", "インフラエンジニア｜還元率83％",
+         "AWS 基盤の設計・構築を担当。案件は100％選択制。", "首都圏のプロジェクト先に配属。"),
+        ("pool", "インフラエンジニア",
+         "AWS 基盤の設計・構築を担当。常時1,200件の案件から希望に合う案件をご紹介。", None),
+    )
+    ids = {}
+    with Database(db_path) as db:
+        run_id = db.start_run("fictional-old-rule-evaluations")
+        for external_id, title, jd, location in examples:
+            scout_id = db.save_scout(Scout(
+                id=external_id, platform="type", company_name="架空会社", job_title=title,
+                jd_text=jd, location_text=location,
+                salary_text="単価連動型、還元率82％。" if external_id == "pool" else None,
+                received_on=datetime.now().date(),
+            ))
+            ids[external_id] = scout_id
+            db.save_evaluation(
+                scout_id, run_id,
+                Evaluation(verdict="MAYBE", confidence=0.7, summary="架空の旧評価。"),
+                provider="codex", model_name="fictional-codex",
+            )
+        db.finish_run(run_id)
+
+    final = DashboardFilters()
+    assert [row.scout_id for row in search_evaluations(db_path, final)] == [ids["target"]]
+    summary = summarize_evaluations(db_path, final)
+    assert (summary.total, summary.keep, summary.maybe) == (1, 0, 1)
+    assert {row.scout_id for row in search_evaluations(
+        db_path, DashboardFilters(provider="codex"),
+    )} == set(ids.values())
+    with TestClient(create_app(db_path)) as client:
+        for external_id in ("application", "client-site", "pool"):
+            assert client.get(f"/jobs/{ids[external_id]}").status_code == 200
+    with Database(db_path, read_only=True) as db:
+        assert db.conn.execute("SELECT COUNT(*) FROM evaluations WHERE provider='codex'").fetchone()[0] == 4
+        assert db.conn.execute("SELECT COUNT(*) FROM local_reprocess").fetchone()[0] == 0
+
+
+def test_web_final_requires_confirmed_target_but_explicit_provider_keeps_audit(tmp_path):
+    from scout_agent.web.services import DashboardFilters, search_evaluations, summarize_evaluations
+
+    db_path = tmp_path / "fictional-target-gate.db"
+    examples = (
+        ("confirmed", "Cloud Engineer", "AWS 基盤の設計・構築を主担当。"),
+        ("uncertain", "インフラエンジニア", "クラウド案件約半数。希望によりインフラ配属。"),
+        ("rejected", "ネットワークエンジニア", "LAN スイッチとルータを設計・運用。"),
+    )
+    ids = {}
+    with Database(db_path) as db:
+        run_id = db.start_run("fictional-target-gate")
+        for external_id, title, jd in examples:
+            scout_id = db.save_scout(Scout(
+                id=external_id, platform="type", company_name="架空会社", job_title=title,
+                jd_text=jd, received_on=datetime.now().date(),
+            ))
+            ids[external_id] = scout_id
+            db.save_evaluation(
+                scout_id, run_id,
+                Evaluation(verdict="KEEP", confidence=0.8, summary="架空の歴史評価。"),
+                provider="codex", model_name="fictional-codex",
+            )
+        db.finish_run(run_id)
+
+    assert [row.scout_id for row in search_evaluations(db_path, DashboardFilters())] == [ids["confirmed"]]
+    assert summarize_evaluations(db_path, DashboardFilters()).total == 1
+    assert {row.scout_id for row in search_evaluations(
+        db_path, DashboardFilters(provider="codex"),
+    )} == set(ids.values())
+    with TestClient(create_app(db_path)) as client:
+        assert "インフラエンジニア" not in client.get("/").text
+        assert "インフラエンジニア" in client.get("/?provider=codex").text
+        assert client.get(f"/jobs/{ids['uncertain']}").status_code == 200
+        assert client.get(f"/jobs/{ids['rejected']}").status_code == 200
+    with Database(db_path, read_only=True) as db:
+        assert db.conn.execute("SELECT COUNT(*) FROM evaluations WHERE provider='codex'").fetchone()[0] == 3
+
+
+def test_web_priority_tier_filter_sort_salary_ceiling_and_detail_are_read_only(tmp_path):
+    from scout_agent.web.services import DashboardFilters, search_evaluations, summarize_evaluations
+
+    db_path = tmp_path / "fictional-priority.db"
+    cases = (
+        ("c", "C Cloud", "AWS 基盤の設計・構築を主担当。", "年収500万円～650万円", 0),
+        ("b", "B Cloud", "AWS 基盤の設計・構築を主担当。週3日リモート勤務。",
+         "年収500万円～650万円", 1),
+        ("a", "A Cloud", "AWS 基盤の設計・構築を主担当。年間休日125日。",
+         "年収500万円～650万円", 2),
+        ("s", "S Cloud", "AWS 基盤の設計・構築を主担当。原則フルリモート勤務。",
+         "年収500万円～650万円", 3),
+        ("low", "Low Cloud", "AWS 基盤の設計・構築を主担当。原則フルリモート勤務。",
+         "年収350万円～430万円", 0),
+        ("span", "Span Cloud", "AWS 基盤の設計・構築を主担当。",
+         "年収400万円～600万円", 1),
+    )
+    ids = {}
+    with Database(db_path) as db:
+        run_id = db.start_run("fictional-priority")
+        for external_id, title, jd, salary, days_old in cases:
+            scout_id = db.save_scout(Scout(
+                id=external_id, platform="type", company_name="架空会社", job_title=title,
+                jd_text=jd, salary_text=salary,
+                received_on=(datetime.now() - timedelta(days=days_old)).date(),
+            ))
+            ids[external_id] = scout_id
+            db.save_evaluation(
+                scout_id, run_id,
+                Evaluation(verdict="KEEP", confidence=0.8, summary="架空正式评价。"),
+                provider="codex", model_name="fictional-codex",
+            )
+        db.finish_run(run_id)
+
+    final = search_evaluations(db_path, DashboardFilters())
+    assert [row.job_title for row in final] == [
+        "S Cloud", "A Cloud", "B Cloud", "C Cloud", "Span Cloud",
+    ]
+    assert summarize_evaluations(db_path, DashboardFilters()).total == 5
+    assert [row.scout_id for row in search_evaluations(
+        db_path, DashboardFilters(tier="B"),
+    )] == [ids["b"]]
+    assert {row.scout_id for row in search_evaluations(
+        db_path, DashboardFilters(provider="codex", tier="S"),
+    )} == {ids["s"], ids["low"]}
+    with TestClient(create_app(db_path)) as client:
+        home = client.get("/")
+        assert home.status_code == 200
+        assert "Tier S" in home.text and "Tier A" in home.text
+        assert "年休：125日" in home.text
+        assert "薪资：年収 400–600 万円" in home.text
+        assert "Low Cloud" not in home.text
+        assert "Low Cloud" in client.get("/?provider=codex").text
+        tier_b = client.get("/?tier=B")
+        assert tier_b.status_code == 200 and "B Cloud" in tier_b.text
+        assert "S Cloud" not in tier_b.text
+        assert client.get("/?tier=invalid").status_code == 422
+        detail = client.get(f"/jobs/{ids['s']}")
+        assert detail.status_code == 200
+        assert "Priority evidence" in detail.text
+        assert "JD 明确：原則フルリモート" in detail.text
+    with Database(db_path, read_only=True) as db:
+        assert db.conn.execute("SELECT COUNT(*) FROM evaluations WHERE provider='codex'").fetchone()[0] == 6
 
 
 def test_web_detail_page_uses_stored_evaluation_without_private_scout_text(tmp_path):
@@ -345,7 +542,7 @@ def test_web_detail_page_uses_stored_evaluation_without_private_scout_text(tmp_p
         html = response.text
         for value in (
             "架空Infra社", "Cloud Engineer", "KEEP", "82%", "AWS 基盘职责明确。",
-            "工作方式待确认。", "年収500万円", "東京", "Remote",
+            "工作方式待确认。", "年収 500 万円", "東京", "Remote",
             "codex / fictional-codex", "评价时间", "https://example.invalid/infra",
         ):
             assert value in html

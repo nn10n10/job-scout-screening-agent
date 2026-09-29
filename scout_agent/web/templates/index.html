@@ -63,6 +63,13 @@
           {% endfor %}
         </select>
       </label>
+      <label class="field">Tier
+        <select name="tier">
+          {% for option in tier_options %}
+            <option value="{{ option }}" {% if filters.tier == option %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <div class="filter-actions">
         <button type="submit">筛选</button>
         <a href="/">重置</a>
@@ -70,22 +77,24 @@
     </form>
 
     {% if cards %}
-      <p class="count">显示 {{ cards|length }} 条评价 · 按收到时间从新到旧 · 最多 100 条</p>
+      <p class="count">显示 {{ cards|length }} 条评价 · {{ '按 Tier S→A→B→C，同档按收到时间从新到旧' if filters.provider == 'Final' else '按收到时间从新到旧' }} · 最多 100 条</p>
       <section class="cards" aria-label="职位评价">
         {% for card in cards %}
           <article class="card card-{{ card.verdict|lower }}">
             <div class="card-primary">
               <div class="card-top">
                 <span class="verdict verdict-{{ card.verdict|lower }}">{{ card.verdict }}</span>
+                {% if card.priority_tier %}<span class="verdict verdict-skip">Tier {{ card.priority_tier }}</span>{% endif %}
                 {% if card.provider == 'mock' %}<span class="mock-note">测试/非正式评价</span>{% endif %}
               </div>
               <p class="company">{{ card.company or '公司未注明' }}</p>
               <h2>{{ card.job_title or '职位未注明' }}</h2>
             </div>
             <div class="card-secondary">
-              {% if card.salary %}<span>薪资：{{ card.salary }}</span>{% endif %}
+              <span>薪资：{{ card.salary_display }}</span>
               {% if card.location %}<span>地点：{{ card.location }}</span>{% endif %}
-              {% if card.remote_evidence %}<span>远程：{{ card.remote_evidence }}</span>{% endif %}
+              <span>远程：{{ card.remote_evidence or '不明' }}</span>
+              <span>年休：{{ card.annual_holidays ~ '日' if card.annual_holidays is not none else '不明' }}</span>
               <span>平台：{{ card.platform }}</span>
               <span>分类：{{ card.provider }}</span>
               <span>收到：{{ card.received_date or '未确认' }}</span>
