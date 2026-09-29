@@ -8,7 +8,9 @@ from typing import Callable, Literal
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
 from scout_agent.platforms.doda import doda_detail_prefilter
-from scout_agent.platforms.mynavi import mynavi_detail_prefilter, mynavi_primary_target_duty
+from scout_agent.platforms.mynavi import (
+    mynavi_detail_prefilter, mynavi_primary_target_duty, mynavi_ses_hard_rule,
+)
 from scout_agent.platforms.type_jp import prefilter_title, type_post_detail_hard_rule
 
 
@@ -60,9 +62,9 @@ def _mynavi_rules(scout: Scout) -> LocalResult:
             ),
             "mynavi-detail-prefilter",
         )
-    evaluation = type_post_detail_hard_rule(scout)
+    evaluation = mynavi_ses_hard_rule(scout)
     if evaluation is not None:
-        return LocalResult("local_skip", "JD 命中本地驻场或 SES hard rule。", evaluation, "mynavi-hard-rule")
+        return LocalResult("local_skip", evaluation.reasons[0], evaluation, "mynavi-ses-hard-rule")
     if not mynavi_primary_target_duty(scout.jd_text) and prefilter_title(scout.job_title).decision == "TITLE_SKIP":
         return LocalResult(
             "local_skip", "详情职位标题明确不属于 IT 或 Cloud/Infrastructure 方向。",

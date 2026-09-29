@@ -75,6 +75,65 @@ SES_NEGATION = re.compile(
     r"SES(?:ではない|ではありません|なし|を行わない)|"
     r"(?:客先|顧客先|クライアント先)常駐(?:なし|はありません|しない|ではない|ゼロ)"
 )
+TYPE_TARGET_DUTY = re.compile(
+    r"(?:クラウド|インフラ|IT基盤|AWS|Azure|ネットワーク|NW|サーバー?(?!サイド)|"
+    r"Cloud|Infrastructure|Platform|SRE|DevOps|Server(?![- ]?side)|Network)"
+    r".{0,45}(?:設計|構築|運用|移行|保守|改善)|"
+    r"(?:設計|構築|運用|移行).{0,25}(?:クラウド|インフラ|AWS|Azure|ネットワーク|サーバー?)",
+    re.IGNORECASE | re.DOTALL,
+)
+TYPE_TARGET_TITLE = re.compile(
+    r"(?:クラウド|インフラ|IT基盤|AWS|Azure|ネットワーク|サーバー?(?!サイド)|"
+    r"Cloud|Infrastructure|Platform|SRE|DevOps|Server(?![- ]?side)|Network)",
+    re.IGNORECASE,
+)
+TYPE_NON_TARGET_MAIN = (
+    (re.compile(r"Web(?:系|アプリ|システム).{0,35}開発|Webアプリケーション|"
+                r"スマートフォンアプリ.{0,30}開発|業務系システム.{0,25}開発|"
+                r"システム(?:の)?(?:設計・)?開発|新サービス開発", re.DOTALL), "Application/Web/System 开发"),
+    (re.compile(r"サーバーサイド.{0,20}開発|バックエンド.{0,20}開発|フロントエンド.{0,20}開発", re.DOTALL),
+     "Backend/Frontend 开发"),
+    (re.compile(r"自動車関連.{0,30}組み込み開発|組込.{0,25}開発|車載.{0,25}(?:開発|テスト)"),
+     "組込/车载开发"),
+    (re.compile(r"ITサポート事務|ヘルプデスク.{0,20}担当|"
+                r"CADオペレーター|テクニカルサポート業務|"
+                r"評価、テスト作成|先輩エンジニアの補助"), "Helpdesk/IT 支援/测试"),
+)
+TYPE_CLIENT_ASSIGNMENT = re.compile(
+    r"(?:客先|顧客先)常駐(?!なし|はありません|しない|ではない|ゼロ)|"
+    r"クライアント先(?:にて|で|または|への出社)|"
+    r"クライアント企業先|お客様先|客先案件|プロジェクト先|"
+    r"派遣先|就業先|クライアント案件にアサイン",
+)
+TYPE_STRONG_SES = (
+    (re.compile(r"還元率\s*\d|単価連動"), "還元率/単価連動"),
+    (re.compile(r"案件.{0,8}選択(?:制)?|案件は.{0,15}選(?:ぶ|べる|択)|"
+                r"案件を.{0,15}選(?:ぶ|べる|択)|案件選択はエンジニアが主体"), "案件選択"),
+    (re.compile(r"会社都合.{0,15}アサイン|無理なアサイン|"
+                r"営業が.{0,25}(?:案件|現場)?を?探|(?:案件|現場).{0,25}営業が探|"
+                r"営業.{0,70}(?:案件|現場).{0,35}(?:探|紹介|提案)|"
+                r"営業.{0,30}(?:探|紹介|提案).{0,35}(?:案件|現場)"), "営業紹介/会社都合アサイン"),
+    (re.compile(r"(?:常時)?[\d,]+件(?:超|以上)?の案件|常時[\d,]+件(?:超|以上)?の案件|"
+                r"常時[\d,]+件超の案件"), "大量案件からの配属"),
+)
+TYPE_GENERIC_PROJECT_PLACEMENT = re.compile(r"プロジェクト(?:先)?へ配属|案件へ配属|配属先を選")
+TYPE_POOL_ASSIGNMENT = re.compile(
+    r"(?:常時)?[\d,]+件(?:超|以上)?の案件から.{0,120}(?:紹介|提案|選|参画|配属)|"
+    r"案件(?:プール|一覧).{0,80}(?:紹介|提案|配属)|"
+    r"営業.{0,100}案件(?:を|から).{0,60}(?:紹介|提案|探)",
+    re.DOTALL,
+)
+TYPE_COMMERCIAL_SES = (
+    (TYPE_STRONG_SES[1][0], "案件選択"),
+    (re.compile(r"単価連動"), "単価連動"),
+    (re.compile(r"還元率\s*\d"), "還元率"),
+    (re.compile(r"会社都合.{0,15}アサイン|無理なアサイン"), "会社都合アサイン"),
+    (re.compile(r"営業.{0,100}(?:案件|現場).{0,60}(?:紹介|提案|探)|"
+                r"(?:案件|現場).{0,40}営業が探", re.DOTALL), "営業による案件紹介"),
+    (re.compile(r"待機(?:時|中|期間).{0,12}(?:給与|月給).{0,8}保証|"
+                r"待機(?:時|中|期間).{0,12}給与あり"), "待機時給与保証"),
+)
+TYPE_INHOUSE_NO_CLIENT = re.compile(r"自社内勤務|基本自社勤務|常駐なし|客先常駐なし")
 
 
 @dataclass(frozen=True)
@@ -138,6 +197,94 @@ def prefilter_jobs(titles: tuple[str, ...]) -> list[TitlePrefilterResult]:
 def title_is_clear_non_target(titles: tuple[str, ...]) -> bool:
     """Compatibility helper: an offer is skipped only when all jobs are skipped."""
     return bool(titles) and all(item.decision == "TITLE_SKIP" for item in prefilter_jobs(titles))
+
+
+def _type_primary_jd(jd: str) -> str:
+    return re.split(r"(?:^|\n)(?:案件例|開発環境・業務範囲)", jd, maxsplit=1)[0][:1800]
+
+
+def type_primary_target_duty(scout: Scout) -> bool:
+    """A target title plus primary-duty evidence, not an incidental tool/example."""
+    title = scout.job_title or ""
+    if re.search(r"サーバーサイド|server[- ]?side", title, re.IGNORECASE):
+        return False
+    return bool(TYPE_TARGET_TITLE.search(title) and TYPE_TARGET_DUTY.search(_type_primary_jd(scout.jd_text or "")))
+
+
+def type_detail_local_skip_reason(scout: Scout) -> str | None:
+    """Exclude evidenced non-target primary work before evaluating SES risk."""
+    jd = scout.jd_text or ""
+    primary = _type_primary_jd(jd)
+    title = scout.job_title or ""
+    if not primary:
+        return None
+    if re.search(r"初級(?:IT)?エンジニア", title) and re.search(r"研修", primary) \
+            and re.search(r"監視|ヘルプデスク|テクニカルサポート", jd):
+        return "JD 说明先培训再分配监视或 Helpdesk 等初级项目，Cloud/Infrastructure 并非当前主职。"
+    if type_primary_target_duty(scout):
+        return None
+    # A generic title with both application and infrastructure duties does not
+    # establish the actual assignment; leave it for the separate SES hard rule.
+    if TYPE_TARGET_DUTY.search(primary) and re.search(r"ITエンジニア|\bSE\b", title, re.IGNORECASE):
+        return None
+    if re.search(r"ITサポート事務|CADオペレーター|テクニカルサポート業務|"
+                 r"評価、テスト作成|先輩エンジニアの補助", primary):
+        return "JD 主职责明确为 Helpdesk/IT 支援、测试或 CAD，非 Cloud/Infrastructure 主职。"
+    for pattern, category in TYPE_NON_TARGET_MAIN:
+        if pattern.search(primary):
+            return f"JD 主职责明确为{category}，Cloud/Infrastructure 不是主职。"
+    if re.search(r"開発エンジニア|Webエンジニア|サーバーサイドエンジニア", title) \
+            and re.search(r"(?:Web|アプリ|業務システム|基幹システム).{0,30}開発", jd, re.DOTALL) \
+            and not TYPE_TARGET_DUTY.search(primary):
+        return "职位与 JD 项目例明确以 Application/Web/System 开发为主，非 Cloud/Infrastructure 主职。"
+    if re.search(r"AI案件|AIプロジェクト", primary) and re.search(
+        r"フロントエンド開発|AIエージェント|機械学習モデル|生成AI", jd,
+    ) and not TYPE_TARGET_DUTY.search(primary):
+        return "JD 主要介绍 AI/Application 开发项目，Cloud/Infrastructure 仅为零散项目例。"
+    return None
+
+
+def type_ses_hard_rule(scout: Scout) -> Evaluation | None:
+    """Apply the user's non-SES/client-site red line only on combined evidence."""
+    jd = scout.jd_text or ""
+    if not jd:
+        return None
+    primary = _type_primary_jd(jd)
+    location = scout.location_text or ""
+    combined = " ".join((scout.job_title or "", jd, scout.salary_text or "", location))
+    site = TYPE_CLIENT_ASSIGNMENT.search(location) or TYPE_CLIENT_ASSIGNMENT.search(primary)
+    signals = [name for pattern, name in TYPE_STRONG_SES if pattern.search(combined)]
+    pool = TYPE_POOL_ASSIGNMENT.search(jd)
+    commercial = [name for pattern, name in TYPE_COMMERCIAL_SES if pattern.search(combined)]
+    pool_without_client = bool(
+        not site and pool and len(commercial) >= 2
+        and not TYPE_INHOUSE_NO_CLIENT.search(" ".join((scout.job_title or "", primary, location)))
+    )
+    project_placement = TYPE_GENERIC_PROJECT_PLACEMENT.search(primary)
+    target_main = type_primary_target_duty(scout)
+    title = scout.job_title or ""
+    target_title = bool(TYPE_TARGET_TITLE.search(title) and not re.search(
+        r"サーバーサイド|server[- ]?side", title, re.IGNORECASE,
+    ))
+    if target_main or target_title:
+        if not ((site and signals) or pool_without_client):
+            return None
+    elif not ((site and signals) or project_placement or pool_without_client):
+        return None
+    if not target_main and project_placement:
+        signals.append("项目配属")
+    if pool_without_client:
+        signals = ["案件池介绍配属", *commercial]
+    if not signals:
+        return None
+    return Evaluation(
+        verdict="SKIP", confidence=0.9,
+        summary="JD 的客先/项目配属与强案件制证据触发非 SES/非客先常驻硬红线。",
+        reasons=[f"本地证据：{'客先/项目现场配属、' if site else ''}"
+                 f"{'、'.join(dict.fromkeys(signals))}。"],
+        concerns=["未将受託、直請け、チーム参画或普通的『案件』单独视为 SES。"],
+        client_site=True if site else None,
+    )
 
 
 def type_post_detail_hard_rule(scout: Scout) -> Evaluation | None:

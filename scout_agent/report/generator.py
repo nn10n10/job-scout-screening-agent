@@ -79,3 +79,66 @@ def generate_report(
     }
     json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return html_path, json_path
+
+
+def generate_daily_report(
+    output_dir: Path, *, platform_stats: dict[str, dict], totals: dict[str, int],
+    results: list[tuple[Scout, Evaluation, EvaluationMetadata]],
+    errors: dict[str, str], model_name: str, pending_remaining: int,
+    generated_at: datetime | None = None,
+) -> tuple[Path, Path]:
+    """Publish only KEEP/MAYBE details; SKIP remains an aggregate count."""
+    generated_at = generated_at or datetime.now()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    name = generated_at.strftime("%Y-%m-%d_%H%M_daily_report")
+    html_path = output_dir / f"{name}.html"
+    json_path = output_dir / f"{name}.json"
+    suffix = 2
+    while html_path.exists() or json_path.exists():
+        html_path = output_dir / f"{name}_{suffix}.html"
+        json_path = output_dir / f"{name}_{suffix}.json"
+        suffix += 1
+    cards = []
+    for scout, evaluation, metadata in results:
+        if evaluation.verdict not in {"KEEP", "MAYBE"}:
+            continue
+        cards.append({
+            "platform": scout.platform,
+            "verdict": evaluation.verdict,
+            "company": scout.company_name,
+            "job_title": scout.job_title,
+            "salary": scout.salary_text,
+            "location": scout.location_text,
+            "remote": "Remote" if evaluation.remote is True else (
+                "Hybrid" if evaluation.hybrid is True else None
+            ),
+            "summary": evaluation.summary,
+            "reasons": evaluation.reasons,
+            "concerns": evaluation.concerns,
+            "url": _safe_url(scout.url),
+            "provider": metadata.provider,
+            "model_name": metadata.model_name,
+        })
+    cards.sort(key=lambda item: (item["verdict"] != "KEEP", item["platform"], item["company"] or ""))
+    env = Environment(
+        loader=FileSystemLoader(Path(__file__).parent / "templates"),
+        autoescape=select_autoescape(["html", "j2"]),
+    )
+    html = env.get_template("daily.html.j2").render(
+        generated_at=generated_at, platform_stats=platform_stats, totals=totals,
+        cards=cards, errors=errors, model_name=model_name,
+        pending_remaining=pending_remaining,
+    )
+    html_path.write_text(html, encoding="utf-8")
+    data = {
+        "generated_at": generated_at.isoformat(),
+        "classifier_model": model_name,
+        "platforms": platform_stats,
+        "totals": totals,
+        "pending_remaining": pending_remaining,
+        "errors": errors,
+        "keep": [card for card in cards if card["verdict"] == "KEEP"],
+        "maybe": [card for card in cards if card["verdict"] == "MAYBE"],
+    }
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return html_path, json_path

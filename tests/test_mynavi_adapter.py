@@ -14,7 +14,7 @@ from scout_agent.local_reprocess import reprocess_stored_scout
 from scout_agent.models.scout import Scout
 from scout_agent.platforms.mynavi import (
     MynaviAdapter, MynaviScoutRef, mynavi_detail_prefilter,
-    mynavi_external_id, parse_mynavi_ref,
+    mynavi_external_id, mynavi_primary_target_duty, parse_mynavi_ref,
 )
 from scout_agent.storage.db import Database
 
@@ -66,6 +66,98 @@ def test_mynavi_detail_prefilter_keeps_target_and_ambiguous_roles():
     app = Scout(platform="mynavi", job_title="アプリケーションエンジニア",
                 jd_text="jobContentOutline: Web アプリの開発を担当。")
     assert "Application/Web" in mynavi_detail_prefilter(app)
+
+
+@pytest.mark.parametrize("title,outline,category", [
+    ("エンジニア／多要素認証SaaS開発",
+     "クラウド認証システムの開発／運用を担当。", "SaaS/Application"),
+    ("クラウドサービス開発エンジニア",
+     "クラウドサービスの企画・開発が主な業務。", "SaaS/Application"),
+    ("ITエンジニア", "Webアプリ開発やクラウド構築を担当。", "Application/Web"),
+])
+def test_mynavi_cloud_product_development_is_not_infrastructure(title, outline, category):
+    scout = Scout(platform="mynavi", job_title=title,
+                  jd_text=f"jobContentOutline: {outline}\n"
+                          "jobContentDetail: フロントエンドとバックエンドの開発を担当。")
+    assert not mynavi_primary_target_duty(scout.jd_text)
+    result = reprocess_stored_scout(scout)
+    assert result.decision == "local_skip"
+    assert result.model_name == "mynavi-detail-prefilter"
+    assert category in result.reason
+
+
+@pytest.mark.parametrize("title,outline", [
+    ("クラウドエンジニア", "AWS 基盤の設計・構築を主担当。"),
+    ("インフラエンジニア", "クラウド環境の設計・運用が主要業務。"),
+    ("ITエンジニア", "アプリ開発とクラウド基盤の構築をそれぞれ担当。"),
+])
+def test_mynavi_explicit_cloud_infrastructure_remains_candidate(title, outline):
+    scout = Scout(platform="mynavi", job_title=title,
+                  jd_text=f"jobContentOutline: {outline}")
+    assert mynavi_primary_target_duty(scout.jd_text)
+    assert reprocess_stored_scout(scout).decision == "classifier_candidate"
+
+
+def test_mynavi_ses_rule_requires_combined_evidence_and_protects_inhouse():
+    target = Scout(
+        platform="mynavi", job_title="インフラエンジニア",
+        jd_text="jobContentOutline: AWS 基盤の設計・構築を担当。\n"
+                "jobContentDetail: 待機期間も給与100％保証。",
+        location_text="首都圏のプロジェクト先に配属。",
+    )
+    result = reprocess_stored_scout(target)
+    assert result.decision == "local_skip"
+    assert result.model_name == "mynavi-ses-hard-rule"
+    assert "客先/项目现场配属" in result.reason
+    pool = Scout(
+        platform="mynavi", job_title="ITエンジニア",
+        jd_text="jobContentOutline: 担当職種は配属後に決定。\n"
+                "jobContentDetail: 案件リストから希望案件を選択。還元率80％。",
+    )
+    assert reprocess_stored_scout(pool).model_name == "mynavi-ses-hard-rule"
+    assert reprocess_stored_scout(pool.model_copy(update={
+        "jd_text": "jobContentOutline: 担当職種は配属後に決定。\n"
+                   "jobContentDetail: 案件リストから希望案件を選択。",
+    })).decision == "classifier_candidate"
+    assert reprocess_stored_scout(pool.model_copy(update={
+        "jd_text": "jobContentOutline: 担当職種は配属後に決定。\n"
+                   "jobContentDetail: 受託・直請けのチーム案件を担当。",
+    })).decision == "classifier_candidate"
+    assert reprocess_stored_scout(pool.model_copy(update={
+        "jd_text": "jobContentOutline: 担当職種は配属後に決定。\n"
+                   "jobContentDetail: 会社都合のアサインから脱却したい方を歓迎。"
+                   "待機中でも給与の変更はあります。",
+    })).decision == "classifier_candidate"
+    assert reprocess_stored_scout(pool.model_copy(update={
+        "location_text": "自社内勤務。客先常駐なし。",
+    })).decision == "classifier_candidate"
+
+
+@pytest.mark.parametrize("title,outline,category", [
+    ("受付コンシェルジュ", "ご来店されたお客様の相談を受け、接客・案内を担当。", "受付・接客"),
+    ("お部屋探しサポート", "お客様の希望に沿う住まい探しをサポート。", "住まい探し"),
+    ("店舗カウンター接客", "店頭でお客様に商品をご案内。", "店舗・カウンター"),
+])
+def test_mynavi_detail_prefilter_skips_evidenced_non_it_service_duties(
+    title, outline, category,
+):
+    scout = Scout(platform="mynavi", job_title=title,
+                  jd_text=f"jobContentOutline: {outline}\n"
+                          "jobContentDetail: 顧客への対面サービスを担当。")
+    result = reprocess_stored_scout(scout)
+    assert result.decision == "local_skip"
+    assert category in result.reason
+
+
+@pytest.mark.parametrize("title,outline", [
+    ("受付コンシェルジュ", "仕事内容は配属後に決定。"),
+    ("お部屋探しサポート", "仕事内容は配属後に決定。"),
+    ("クラウドエンジニア（店舗接客システム）", "AWS 基盤の設計・構築を主担当。"),
+])
+def test_mynavi_service_terms_do_not_skip_without_non_it_primary_duty(title, outline):
+    scout = Scout(platform="mynavi", job_title=title,
+                  jd_text=f"jobContentOutline: {outline}")
+    assert reprocess_stored_scout(scout).decision == "classifier_candidate"
 
 
 def test_mynavi_primary_infra_duty_overrides_non_target_title_fallback():
@@ -252,7 +344,7 @@ def test_mynavi_two_stage_scan_audit_local_skip_and_zero_repeat(tmp_path, monkey
         assert rows[1]["list_title"] == "架空 Scout のご案内"
         assert db.conn.execute(
             "SELECT COUNT(*) FROM local_reprocess WHERE decision='classifier_candidate'"
-        ).fetchone()[0] == 1
+        ).fetchone()[0] == 0  # Successful classification consumes eligibility.
         assert {row[0] for row in db.conn.execute("SELECT DISTINCT provider FROM evaluations")} == {
             "local", "mock",
         }

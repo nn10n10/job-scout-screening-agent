@@ -11,7 +11,9 @@ from zoneinfo import ZoneInfo
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
+from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
+from .type_jp import TYPE_CLIENT_ASSIGNMENT, TYPE_INHOUSE_NO_CLIENT
 from .doda import _job_outline, doda_detail_prefilter
 from .base import PlatformAdapter
 
@@ -28,11 +30,13 @@ RECEIVED_DATE = re.compile(r"受信日\s*[:：]\s*(\d{4})/(\d{1,2})/(\d{1,2})")
 # In particular, an AWS tool mention in a Backend JD, or social infrastructure
 # (water/gas/transport), is not evidence of IT infrastructure work.
 MYNAVI_TARGET_WORK = re.compile(
-    r"(?:\bcloud\b|クラウド(?!型)|\binfrastructure\b|\binfra\b|"
+    # Bare "cloud" may describe an application or SaaS product, not infra work.
+    r"(?:(?:\bcloud\b|クラウド)(?:基盤|環境|インフラ|ネットワーク|サーバー|プラットフォーム)|"
+    r"\b(?:aws|azure|gcp)\b\s*(?:基盤|環境|インフラ|の設計|の構築)|"
+    r"\binfrastructure\b|\binfra\b|"
     r"ITインフラ|インフラ|\bplatform\b|プラットフォーム|\bsre\b|\bdevops\b|"
     r"\bnetwork\b|ネットワーク|\bserver\b|サーバー?(?!ー?サイド)|"
-    r"(?<![A-Za-z])kubernetes(?![A-Za-z])|"
-    r"\baws\b\s*(?:基盤|環境|インフラ))"
+    r"(?<![A-Za-z])kubernetes(?![A-Za-z])|\bIaC\b)"
     r"[^、。／/\n]{0,25}(?:設計|構築|運用|保守|管理|改善|最適化|監視|障害対応|自動化|移行|リプレイス)",
     re.IGNORECASE,
 )
@@ -58,6 +62,15 @@ MYNAVI_NON_TARGET_MAIN = (
     (re.compile(r"モバイルアプリ|スマホアプリ|Android|iOS|組込|組み込み|制御プログラム|車載|パチスロ", re.IGNORECASE), "Mobile/Embedded 开发"),
     (re.compile(r"backend|back-end|バックエンド|frontend|front-end|フロントエンド|サーバーサイド|サーバサイド", re.IGNORECASE), "Backend/Frontend 开发"),
     (re.compile(r"Web系|Webアプリ|Web開発|WEBエンジニア|Webエンジニア|ウェブアプリ|Webサイト|ECサイト|アプリケーション|アプリ開発", re.IGNORECASE), "Application/Web 开发"),
+    (re.compile(r"(?:SaaS|クラウドサービス|クラウド認証システム).{0,35}(?:開発|企画)|"
+                r"(?:SaaS|クラウドサービス).{0,12}エンジニア", re.IGNORECASE), "SaaS/Application 开发"),
+    (re.compile(r"電子帳票システム.{0,100}(?:設定|試験|導入)", re.IGNORECASE | re.DOTALL),
+     "业务系统导入/测试"),
+    (re.compile(r"Java.{0,12}(?:開発プロジェクト|システム開発)", re.IGNORECASE),
+     "Application/System 开发"),
+    (re.compile(r"(?:顧客|クライアント).{0,30}開発チームをつなぎ|"
+                r"開発チーム.{0,20}(?:進捗管理|品質確認)", re.IGNORECASE | re.DOTALL),
+     "开发团队协调/进度管理"),
     (re.compile(r"システム開発|システム(?:等)?の(?:設計|開発|改修|保守|運用|導入)|システム(?:の)?設計.{0,6}開発|システムを(?:開発|導入)|業務システム|基幹システム|管理システム|パッケージ(?:システム|ソフト)|パッケージを.{0,35}(?:導入|開発)|ソフトウェア.{0,10}開発|ソフト開発|プログラムの開発|機能開発|サービス.{0,15}開発|製品.{0,15}開発|開発全工程|開発エンジニア|開発業務|POS開発|(?:設計|要件定義).{0,12}開発.{0,8}テスト", re.IGNORECASE), "System/Package 开发"),
 )
 MYNAVI_MANAGEMENT_ONLY = re.compile(
@@ -65,6 +78,42 @@ MYNAVI_MANAGEMENT_ONLY = re.compile(
     r"プロジェクト(?:の|での)(?:統括|管理|進捗管理)|"
     r"(?:開発|構築)作業は(?:基本)?なし|マネジメント業務を(?:担当|お任せ)",
     re.IGNORECASE,
+)
+MYNAVI_NON_IT_SERVICE_MAIN = (
+    (
+        re.compile(r"受付|コンシェルジュ|フロント(?!エンド)"),
+        re.compile(r"お客様|ご来店|受付|接客|ご案内|販売|ショップ|カウンター"),
+        "受付・接客",
+    ),
+    (
+        re.compile(r"お部屋探し|住まい探し|物件(?:案内|紹介)|入居(?:者)?サポート|賃貸仲介|不動産(?:営業|案内|仲介)"),
+        re.compile(r"(?:住まい|お部屋|物件|賃貸|間取り|家賃).{0,40}(?:探し|案内|サポート|紹介|提案|お客様)|"
+                   r"(?:お客様|ご来店).{0,40}(?:住まい|お部屋|物件|賃貸|間取り|家賃)"),
+        "不動産・賃貸の住まい探し支援",
+    ),
+    (
+        re.compile(r"(?:店舗|店頭|カウンター).{0,8}(?:接客|案内|受付|販売|スタッフ)|"
+                   r"(?:接客|販売).{0,8}(?:スタッフ|担当)|(?:顧客|お客様)案内"),
+        re.compile(r"店舗|店頭|カウンター|接客|ご来店|お客様|販売|商品案内"),
+        "店舗・カウンターでの接客・顧客案内",
+    ),
+)
+
+MYNAVI_SES_SIGNALS = (
+    (re.compile(r"案件.{0,12}選択(?:制)?|案件.{0,20}選(?:ぶ|べる|択)|"
+                r"案件リスト.{0,35}選択", re.DOTALL), "案件選択"),
+    (re.compile(r"単価連動|案件単価.{0,35}(?:給与|月給).{0,15}(?:決ま|連動)"), "単価連動"),
+    (re.compile(r"還元率|(?:最大)?還元\s*\d{1,2}\s*[%％]"), "還元率"),
+    (re.compile(r"会社都合.{0,18}アサイン(?:なし|しない|させない|はありません)"), "会社都合アサインなし"),
+    (re.compile(r"営業.{0,35}(?:案件|プロジェクト).{0,35}(?:紹介|探)|"
+                r"(?:案件|プロジェクト).{0,35}営業.{0,25}(?:紹介|探)", re.DOTALL),
+     "営業案件紹介"),
+    (re.compile(r"待機(?:時|中|期間).{0,15}(?:給与|月給).{0,12}(?:保証|減額なし|変更なし)"), "待機給与保証"),
+)
+MYNAVI_PROJECT_ASSIGNMENT = re.compile(
+    r"(?:案件|プロジェクト)(?:に|へ|から)(?:アサイン|配属)|"
+    r"(?:案件|プロジェクト)(?:リスト|一覧|プール).{0,60}(?:選択|紹介|配属)",
+    re.DOTALL,
 )
 
 
@@ -198,7 +247,38 @@ def mynavi_detail_prefilter(scout: Scout) -> str | None:
         return f"详情职位名称明确以{category}为主，JD 未显示 Cloud/Infra/Platform/SRE/DevOps 为主要职责。"
     if title and MYNAVI_TARGET_ROLE.search(title):
         return None
+    # A service-role title alone is not enough: the structured JD outline must
+    # independently describe customer-facing, non-IT primary duties.
+    for role_pattern, duty_pattern, category in MYNAVI_NON_IT_SERVICE_MAIN:
+        if role_pattern.search(title) and duty_pattern.search(outline):
+            return f"结构化 JD 的主要工作职责明确为{category}，未见 IT Cloud/Infrastructure 主职证据。"
     return doda_detail_prefilter(scout)
+
+
+def mynavi_ses_hard_rule(scout: Scout) -> Evaluation | None:
+    """Require combined placement and SES business evidence, or multiple signals."""
+    jd = scout.jd_text or ""
+    if not jd:
+        return None
+    outline = _job_outline(jd)
+    location = scout.location_text or ""
+    if TYPE_INHOUSE_NO_CLIENT.search(" ".join((scout.job_title or "", outline, location))):
+        return None
+    site = TYPE_CLIENT_ASSIGNMENT.search(" ".join((location, outline)))
+    placement = MYNAVI_PROJECT_ASSIGNMENT.search(outline)
+    signals = [name for pattern, name in MYNAVI_SES_SIGNALS
+               if pattern.search(" ".join((jd, scout.salary_text or "")))]
+    if not ((site or placement) and signals or len(signals) >= 2):
+        return None
+    evidence = ["客先/项目现场配属" if site else "案件/项目配属" if placement else "多项案件制商业模式"]
+    evidence.extend(signals)
+    return Evaluation(
+        verdict="SKIP", confidence=0.9,
+        summary="职位的项目配属与强案件制证据触发非 SES/非客先常驻硬红线。",
+        reasons=[f"本地证据：{'、'.join(evidence)}。"],
+        concerns=["未将受託、直請け、チーム参画或普通的『案件』单独视为 SES。"],
+        client_site=True if site else None,
+    )
 
 
 class MynaviAdapter(PlatformAdapter):

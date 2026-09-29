@@ -18,7 +18,10 @@ from scout_agent.local_reprocess import LOCAL_RULES, reprocess_stored_scout
 from scout_agent.models.scout import Scout
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.platforms import ADAPTERS
-from scout_agent.platforms.type_jp import prefilter_jobs, prefilter_title, type_post_detail_hard_rule
+from scout_agent.platforms.type_jp import (
+    prefilter_jobs, prefilter_title, type_detail_local_skip_reason,
+    type_post_detail_hard_rule, type_ses_hard_rule,
+)
 from scout_agent.platforms.doda import doda_detail_prefilter
 from scout_agent.report.generator import generate_report
 from scout_agent.storage.db import Database
@@ -78,12 +81,17 @@ def _finalize_evaluation(evaluation, scout: Scout):
     return validate_explanations(evaluation)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None, *,
+    _daily_mode: bool = False, _daily_capture: dict | None = None,
+) -> int:
     parser = argparse.ArgumentParser(description="READ-ONLY local Job Scout screening agent")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("browser", help="Inspect existing Chrome tabs (CDP) or open legacy persistent Chromium")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())
+    daily = sub.add_parser("daily", help="Run four incremental scans and one daily report")
+    daily.add_argument("--dry-run", action="store_true", help="Preview orchestration without browser, model, or writes")
     evaluate = sub.add_parser("evaluate", help="Classify stored Scouts without browser access")
     evaluate.add_argument("--platform", choices=ADAPTERS.keys())
     evaluate.add_argument("--limit", type=_positive_int)
@@ -103,6 +111,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "evaluate" and args.eligible_only and not args.platform:
         parser.error("--eligible-only requires --platform")
     settings = load_settings()
+
+    if args.command == "daily":
+        from scout_agent.daily import run_daily
+
+        return run_daily(
+            settings, dry_run=args.dry_run,
+            scan_platform=lambda platform, capture: main(
+                ["scan", "--platform", platform],
+                _daily_mode=True, _daily_capture=capture,
+            ),
+            classifier_factory=_classifier,
+            finalize_evaluation=_finalize_evaluation,
+        )
 
     if args.command == "reprocess":
         # In particular, dry-run opens SQLite read-only: no migration, report,
@@ -311,11 +332,15 @@ def main(argv: list[str] | None = None) -> int:
                         if not adapter.is_logged_in(page):
                             raise RuntimeError("マイナビ転職 is not logged in; log in manually in Chrome first")
                         run_id = db.start_run("mynavi")
+                        if _daily_capture is not None:
+                            _daily_capture["run_id"] = run_id
                         stats = {key: 0 for key in (
                             "list_scanned", "already_seen", "TITLE_SKIP", "TITLE_REVIEW", "DETAIL",
                             "detail_fetched", "detail_failed", "DETAIL_LOCAL_SKIP", "locally_skipped",
-                            "sent_to_classifier", "too_old", "unknown_date",
+                            "sent_to_classifier", "too_old", "unknown_date", "new_title_skipped",
                         )}
+                        if _daily_capture is not None:
+                            _daily_capture["stats"] = stats
                         pending_ids = db.mynavi_pending_ids()
                         consecutive_seen = 0
                         candidates = []
@@ -378,6 +403,8 @@ def main(argv: list[str] | None = None) -> int:
                                 if age_days is None:
                                     stats["unknown_date"] += 1
                                 if decision.decision == "TITLE_SKIP":
+                                    if status is None:
+                                        stats["new_title_skipped"] += 1
                                     if status is None:
                                         db.save_mynavi_list_item(
                                             external_id=ref.external_id, job_id=ref.job_id,
@@ -443,15 +470,16 @@ def main(argv: list[str] | None = None) -> int:
                                             stats["DETAIL_LOCAL_SKIP"] += 1
                                         stats["locally_skipped"] += 1
                                     else:
-                                        if classifier is None:
-                                            classifier = _classifier(settings)
-                                        evaluation = _classify(classifier, scout)
-                                        db.save_evaluation(
-                                            scout_id, run_id, evaluation,
-                                            provider=classifier.provider,
-                                            model_name=classifier.model_name,
-                                        )
-                                        stats["sent_to_classifier"] += 1
+                                        if not _daily_mode:
+                                            if classifier is None:
+                                                classifier = _classifier(settings)
+                                            evaluation = _classify(classifier, scout)
+                                            db.save_evaluation(
+                                                scout_id, run_id, evaluation,
+                                                provider=classifier.provider,
+                                                model_name=classifier.model_name,
+                                            )
+                                            stats["sent_to_classifier"] += 1
                                     db.set_mynavi_list_status(ref.external_id, "completed")
                             db.finish_run(run_id)
                         except Exception as exc:
@@ -462,6 +490,8 @@ def main(argv: list[str] | None = None) -> int:
             except CDPConnectionError as exc:
                 print(exc, file=sys.stderr)
                 return 1
+            if _daily_mode:
+                return 0
             _, results = db.get_recent_results(run_id)
             detail_local_skips = [
                 {"company": row["company"], "job_title": row["job_title"],
@@ -500,11 +530,15 @@ def main(argv: list[str] | None = None) -> int:
                         if not adapter.is_logged_in(page):
                             raise RuntimeError("doda is not logged in; log in manually in Chrome first")
                         run_id = db.start_run("doda")
+                        if _daily_capture is not None:
+                            _daily_capture["run_id"] = run_id
                         stats = {key: 0 for key in (
                             "list_scanned", "already_seen", "TITLE_SKIP", "TITLE_REVIEW", "DETAIL",
                             "detail_fetched", "job_details_fetched", "DETAIL_LOCAL_SKIP", "locally_skipped",
-                            "sent_to_classifier", "too_old", "unknown_date",
+                            "sent_to_classifier", "too_old", "unknown_date", "new_title_skipped",
                         )}
+                        if _daily_capture is not None:
+                            _daily_capture["stats"] = stats
                         pending_ids = db.doda_pending_ids()
                         consecutive_seen = 0
                         candidates = []
@@ -544,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
                                 if ref.age_days is None:
                                     stats["unknown_date"] += 1
                                 if decision.decision == "TITLE_SKIP":
+                                    if status is None:
+                                        stats["new_title_skipped"] += 1
                                     db.save_doda_list_item(
                                         external_id=ref.external_id, company_name=ref.company_name,
                                         job_title=ref.job_title, age_days=ref.age_days,
@@ -641,15 +677,16 @@ def main(argv: list[str] | None = None) -> int:
                                         )
                                         stats["locally_skipped"] += 1
                                     else:
-                                        if classifier is None:
-                                            classifier = _classifier(settings)
-                                        evaluation = _classify(classifier, scout)
                                         scout_id = db.save_scout(scout)
-                                        db.save_evaluation(
-                                            scout_id, run_id, evaluation,
-                                            provider=classifier.provider, model_name=classifier.model_name,
-                                        )
-                                        stats["sent_to_classifier"] += 1
+                                        if not _daily_mode:
+                                            if classifier is None:
+                                                classifier = _classifier(settings)
+                                            evaluation = _classify(classifier, scout)
+                                            db.save_evaluation(
+                                                scout_id, run_id, evaluation,
+                                                provider=classifier.provider, model_name=classifier.model_name,
+                                            )
+                                            stats["sent_to_classifier"] += 1
                                     db.set_doda_list_status(scout.id, "completed")
                             db.finish_run(run_id)
                         except Exception as exc:
@@ -660,6 +697,8 @@ def main(argv: list[str] | None = None) -> int:
             except CDPConnectionError as exc:
                 print(exc, file=sys.stderr)
                 return 1
+            if _daily_mode:
+                return 0
             _, results = db.get_recent_results(run_id)
             detail_local_skips = [
                 {"company": row["company"], "job_title": row["job_title"],
@@ -700,12 +739,16 @@ def main(argv: list[str] | None = None) -> int:
                         refs = adapter.get_scout_list(page, limit=settings.list_scan_limit)
                         print(f"type list entries: {len(refs)} (limit {settings.list_scan_limit})", flush=True)
                         run_id = db.start_run(args.platform)
+                        if _daily_capture is not None:
+                            _daily_capture["run_id"] = run_id
                         stats = {key: 0 for key in (
                             "list_scanned", "already_seen", "already_seen_jobs", "TITLE_SKIP",
                             "TITLE_REVIEW", "DETAIL", "title_skipped", "detail_fetched",
                             "job_details_fetched", "locally_skipped", "sent_to_classifier",
-                            "too_old", "unknown_date",
+                            "too_old", "unknown_date", "new_title_skipped",
                         )}
+                        if _daily_capture is not None:
+                            _daily_capture["stats"] = stats
                         consecutive_seen = 0
                         today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
                         cutoff = today - timedelta(days=settings.scout_max_age_days)
@@ -762,6 +805,10 @@ def main(argv: list[str] | None = None) -> int:
                                         break
                                     continue
                                 consecutive_seen = 0
+                                if status is None:
+                                    stats["new_title_skipped"] += sum(
+                                        item.decision == "TITLE_SKIP" for item in decisions
+                                    )
                                 all_skipped = all(item.decision == "TITLE_SKIP" for item in decisions)
                                 if status is None:
                                     db.save_type_list_item(
@@ -813,7 +860,20 @@ def main(argv: list[str] | None = None) -> int:
                                     if db.is_seen(scout):
                                         stats["already_seen_jobs"] += 1
                                         continue
-                                    evaluation = type_post_detail_hard_rule(scout)
+                                    detail_reason = type_detail_local_skip_reason(scout)
+                                    evaluation = None
+                                    model_name = "type-hard-rule"
+                                    if detail_reason is not None:
+                                        evaluation = Evaluation(
+                                            verdict="SKIP", confidence=0.9,
+                                            summary="详情显示岗位主要职责与目标 Cloud/Infrastructure 方向不符。",
+                                            reasons=[detail_reason], concerns=[],
+                                        )
+                                        model_name = "type-detail-prefilter"
+                                    else:
+                                        evaluation = type_ses_hard_rule(scout)
+                                        if evaluation is not None:
+                                            model_name = "type-ses-hard-rule"
                                     if evaluation is None and prefilter_title(scout.job_title).decision == "TITLE_SKIP":
                                         evaluation = Evaluation(
                                             verdict="SKIP", confidence=0.9,
@@ -824,19 +884,20 @@ def main(argv: list[str] | None = None) -> int:
                                         scout_id = db.save_scout(scout)
                                         db.save_evaluation(
                                             scout_id, run_id, evaluation,
-                                            provider="local", model_name="type-hard-rule",
+                                            provider="local", model_name=model_name,
                                         )
                                         stats["locally_skipped"] += 1
                                         continue
-                                    if classifier is None:
-                                        classifier = _classifier(settings)
-                                    evaluation = _classify(classifier, scout)
                                     scout_id = db.save_scout(scout)
-                                    db.save_evaluation(
-                                        scout_id, run_id, evaluation,
-                                        provider=classifier.provider, model_name=classifier.model_name,
-                                    )
-                                    stats["sent_to_classifier"] += 1
+                                    if not _daily_mode:
+                                        if classifier is None:
+                                            classifier = _classifier(settings)
+                                        evaluation = _classify(classifier, scout)
+                                        db.save_evaluation(
+                                            scout_id, run_id, evaluation,
+                                            provider=classifier.provider, model_name=classifier.model_name,
+                                        )
+                                        stats["sent_to_classifier"] += 1
                                 db.finish_type_list_item(ref.external_id)
                             db.finish_run(run_id)
                         except Exception as exc:
@@ -847,6 +908,8 @@ def main(argv: list[str] | None = None) -> int:
             except CDPConnectionError as exc:
                 print(exc, file=sys.stderr)
                 return 1
+            if _daily_mode:
+                return 0
             _, results = db.get_recent_results(run_id)
             html, json_path = generate_report(
                 settings.output_path, results, scan_stats=stats,
@@ -881,21 +944,31 @@ def main(argv: list[str] | None = None) -> int:
                             raise RuntimeError("Green is not logged in; log in manually in Chrome first")
                         refs = adapter.get_scout_list(page)
                         print(f"Green Scout candidates: {len(refs)} (limit 30)", flush=True)
-                        classifier = _classifier(settings)
-                        print(f"Classifier/model: {classifier.provider} / {classifier.model_name}", flush=True)
+                        classifier = None if _daily_mode else _classifier(settings)
+                        if classifier is not None:
+                            print(f"Classifier/model: {classifier.provider} / {classifier.model_name}", flush=True)
                         run_id = db.start_run(args.platform)
                         details_read = 0
+                        green_stats = {"list_scanned": 0, "already_seen": 0,
+                                       "locally_skipped": 0, "sent_to_classifier": 0}
+                        if _daily_capture is not None:
+                            _daily_capture["stats"] = green_stats
                         try:
                             for ref in refs:
-                                if db.is_seen(Scout(id=ref.external_id, platform="green")):
+                                green_stats["list_scanned"] += 1
+                                reference = Scout(id=ref.external_id, platform="green")
+                                if (db.has_stored_scout(reference) if _daily_mode else db.is_seen(reference)):
+                                    green_stats["already_seen"] += 1
                                     break
                                 scout = adapter.normalize_scout(adapter.get_scout_detail(page, ref))
                                 details_read += 1
                                 scout_id = db.save_scout(scout)
-                                db.save_evaluation(
-                                    scout_id, run_id, _classify(classifier, scout),
-                                    provider=classifier.provider, model_name=classifier.model_name,
-                                )
+                                if not _daily_mode:
+                                    db.save_evaluation(
+                                        scout_id, run_id, _classify(classifier, scout),
+                                        provider=classifier.provider, model_name=classifier.model_name,
+                                    )
+                                    green_stats["sent_to_classifier"] += 1
                                 print(f"Green Scout details read: {details_read}", flush=True)
                             db.finish_run(run_id)
                         except Exception as exc:
@@ -906,6 +979,8 @@ def main(argv: list[str] | None = None) -> int:
             except CDPConnectionError as exc:
                 print(exc, file=sys.stderr)
                 return 1
+            if _daily_mode:
+                return 0
             _, results = db.get_recent_results(run_id)
             html, json_path = generate_report(settings.output_path, results)
             print(f"New scouts: {len(results)}")

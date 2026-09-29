@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Job Scout 每日报告</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #ddd; padding: .5rem; text-align: left; }
+    article { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .KEEP { border-left: 6px solid #27824a; } .MAYBE { border-left: 6px solid #c58a19; }
+  </style>
+</head>
+<body>
+  <h1>Job Scout 每日报告</h1>
+  <p>生成时间：{{ generated_at.strftime('%Y-%m-%d %H:%M') }} · Classifier model: {{ model_name }}</p>
+  <p>列表扫描 {{ totals.list_scanned }} · 新职位 {{ totals.new }} · 已见 {{ totals.already_seen }} · 本地排除 {{ totals.local_skip }} · 送入分类器 {{ totals.sent_to_classifier }} · KEEP {{ totals.KEEP }} · MAYBE {{ totals.MAYBE }} · SKIP {{ totals.SKIP }} · 待续跑 {{ pending_remaining }}</p>
+  <table>
+    <thead><tr><th>平台</th><th>列表</th><th>新职位</th><th>已见</th><th>本地排除</th><th>分类</th><th>KEEP</th><th>MAYBE</th><th>SKIP</th><th>状态</th></tr></thead>
+    <tbody>{% for platform, stats in platform_stats.items() %}
+      <tr><td>{{ platform }}</td><td>{{ stats.list_scanned }}</td><td>{{ stats.new }}</td><td>{{ stats.already_seen }}</td><td>{{ stats.local_skip }}</td><td>{{ stats.sent_to_classifier }}</td><td>{{ stats.KEEP }}</td><td>{{ stats.MAYBE }}</td><td>{{ stats.SKIP }}</td><td>{{ stats.error or 'OK' }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% if errors %}<h2>错误／待恢复</h2><ul>{% for source, message in errors.items() %}<li>{{ source }}：{{ message }}</li>{% endfor %}</ul>{% endif %}
+  {% for card in cards %}
+  <article class="{{ card.verdict }}">
+    <h2>{{ card.verdict }} · {{ card.job_title or '未提供职位名称' }}</h2>
+    <p>{{ card.platform }} · {{ card.company or '未提供公司' }}{% if card.salary %} · 薪资：{{ card.salary }}{% endif %}{% if card.location %} · 地点：{{ card.location }}{% endif %}{% if card.remote %} · {{ card.remote }}{% endif %}</p>
+    <p>Classifier/model: {{ card.provider }} / {{ card.model_name }}</p>
+    <p>{{ card.summary }}</p>
+    <h3>理由</h3><ul>{% for reason in card.reasons %}<li>{{ reason }}</li>{% else %}<li>暂无</li>{% endfor %}</ul>
+    <h3>疑虑</h3><ul>{% for concern in card.concerns %}<li>{{ concern }}</li>{% else %}<li>暂无</li>{% endfor %}</ul>
+    {% if card.url %}<p><a href="{{ card.url }}" rel="noopener noreferrer">查看职位详情</a></p>{% endif %}
+  </article>
+  {% endfor %}
+</body>
+</html>

@@ -156,6 +156,13 @@ class Database:
             (scout.platform, scout.dedupe_key),
         ).fetchone() is not None
 
+    def has_stored_scout(self, scout: Scout) -> bool:
+        """A captured but unevaluated Scout is pending, not a new detail fetch."""
+        return self.conn.execute(
+            "SELECT 1 FROM scouts WHERE platform=? AND dedupe_key=?",
+            (scout.platform, scout.dedupe_key),
+        ).fetchone() is not None
+
     def type_list_status(self, external_id: str) -> str | None:
         row = self.conn.execute(
             "SELECT status FROM type_list_items WHERE external_id=?", (external_id,)
@@ -403,15 +410,33 @@ class Database:
         evaluated_at: datetime | None = None,
     ) -> None:
         timestamp = (evaluated_at or datetime.now()).isoformat()
-        self.conn.execute(
-            "INSERT INTO evaluations(scout_id,run_id,payload,created_at,provider,model_name,evaluated_at) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(scout_id) DO UPDATE SET "
-            "run_id=excluded.run_id, payload=excluded.payload, provider=excluded.provider, "
-            "model_name=excluded.model_name, evaluated_at=excluded.evaluated_at",
-            (scout_id, run_id, evaluation.model_dump_json(), timestamp,
-             provider, model_name, timestamp),
-        )
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO evaluations(scout_id,run_id,payload,created_at,provider,model_name,evaluated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(scout_id) DO UPDATE SET "
+                "run_id=excluded.run_id, payload=excluded.payload, provider=excluded.provider, "
+                "model_name=excluded.model_name, evaluated_at=excluded.evaluated_at",
+                (scout_id, run_id, evaluation.model_dump_json(), timestamp,
+                 provider, model_name, timestamp),
+            )
+            self._clear_classifier_candidate(scout_id)
+
+    def save_evaluation_if_absent(
+        self, scout_id: int, run_id: int, evaluation: Evaluation, *,
+        provider: str, model_name: str,
+    ) -> bool:
+        """Daily retries may fill a missing evaluation, never replace one."""
+        timestamp = datetime.now().isoformat()
+        with self.conn:
+            cursor = self.conn.execute(
+                "INSERT INTO evaluations(scout_id,run_id,payload,created_at,provider,model_name,evaluated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(scout_id) DO NOTHING",
+                (scout_id, run_id, evaluation.model_dump_json(), timestamp,
+                 provider, model_name, timestamp),
+            )
+            if cursor.rowcount == 1:
+                self._clear_classifier_candidate(scout_id)
+        return cursor.rowcount == 1
 
     def replace_evaluation_if_provider(
         self, scout_id: int, run_id: int, evaluation: Evaluation, *,
@@ -419,14 +444,23 @@ class Database:
     ) -> bool:
         """Update only if the row still has the requested provider; never touch Codex rows by accident."""
         timestamp = datetime.now().isoformat()
-        cursor = self.conn.execute(
-            "UPDATE evaluations SET run_id=?, payload=?, provider=?, model_name=?, evaluated_at=? "
-            "WHERE scout_id=? AND provider=?",
-            (run_id, evaluation.model_dump_json(), provider, model_name, timestamp,
-             scout_id, expected_provider),
-        )
-        self.conn.commit()
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE evaluations SET run_id=?, payload=?, provider=?, model_name=?, evaluated_at=? "
+                "WHERE scout_id=? AND provider=?",
+                (run_id, evaluation.model_dump_json(), provider, model_name, timestamp,
+                 scout_id, expected_provider),
+            )
+            if cursor.rowcount == 1:
+                self._clear_classifier_candidate(scout_id)
         return cursor.rowcount == 1
+
+    def _clear_classifier_candidate(self, scout_id: int) -> None:
+        """A successful evaluation consumes the pending eligibility marker."""
+        self.conn.execute(
+            "DELETE FROM local_reprocess WHERE scout_id=? AND decision='classifier_candidate'",
+            (scout_id,),
+        )
 
     def get_scouts_for_evaluation(
         self, *, platform: str | None = None, limit: int | None = None,
@@ -452,7 +486,8 @@ class Database:
         if eligible_only:
             conditions.append(
                 "EXISTS (SELECT 1 FROM local_reprocess lr WHERE lr.scout_id=s.id "
-                "AND lr.decision='classifier_candidate')"
+                "AND lr.decision='classifier_candidate' "
+                "AND (e.id IS NULL OR COALESCE(e.evaluated_at,e.created_at)<lr.processed_at))"
             )
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         query = (
@@ -517,6 +552,28 @@ class Database:
                  evaluated_at=datetime.fromisoformat(item["evaluated_at"]),
              ))
             for item in rows
+        ]
+
+    def get_results_for_scout_ids(
+        self, scout_ids: set[int],
+    ) -> list[tuple[Scout, Evaluation, EvaluationMetadata]]:
+        if not scout_ids:
+            return []
+        placeholders = ",".join("?" for _ in scout_ids)
+        rows = self.conn.execute(
+            "SELECT s.payload AS scout_payload,e.payload AS evaluation_payload,"
+            "e.provider,e.model_name,e.evaluated_at "
+            "FROM scouts s JOIN evaluations e ON e.scout_id=s.id "
+            f"WHERE s.id IN ({placeholders}) ORDER BY s.id", tuple(sorted(scout_ids)),
+        ).fetchall()
+        return [
+            (Scout.model_validate_json(row["scout_payload"]),
+             Evaluation.model_validate_json(row["evaluation_payload"]),
+             EvaluationMetadata(
+                 provider=row["provider"], model_name=row["model_name"],
+                 evaluated_at=datetime.fromisoformat(row["evaluated_at"]),
+             ))
+            for row in rows
         ]
 
     def count_processed(self) -> int:

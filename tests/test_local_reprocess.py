@@ -37,6 +37,8 @@ def _seed(db):
         ("no-jd", "doda", "架空未取得会社", "ITエンジニア", None, "mock"),
         ("green", "green", "架空Green会社", "Cloud Engineer", "AWS 基盤の運用。", "mock"),
         ("type", "type", "架空type会社", "SE", "顧客課題への対応。", "mock"),
+        ("mynavi", "mynavi", "架空マイナビ会社", "Cloud Engineer",
+         "jobContentOutline: AWS 基盤の設計・構築を担当。", "codex"),
     ]
     for external_id, platform, company, title, jd, provider in examples:
         scout = Scout(id=external_id, platform=platform, company_name=company,
@@ -113,6 +115,7 @@ def test_reprocess_preserves_scouts_candidates_and_paid_evaluations(tmp_path, mo
         assert rows["no-jd"]["decision"] is None
         assert rows["green"]["provider"] == "mock"
         assert rows["type"]["provider"] == "mock"
+        assert rows["mynavi"]["provider"] == "codex"
         selected = db.get_scouts_for_evaluation(
             platform="doda", replace_provider="mock", eligible_only=True,
         )
@@ -145,3 +148,136 @@ def test_evaluate_eligible_only_limits_mock_replacement(tmp_path, monkeypatch, c
         assert rows["no-jd"] == "mock"
         assert rows["green"] == rows["type"] == "mock"
         assert rows["sales"] == "codex"
+        assert rows["mynavi"] == "codex"
+        assert db.get_scouts_for_evaluation(platform="doda", eligible_only=True, force=True) == []
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM local_reprocess WHERE decision='classifier_candidate'"
+        ).fetchone()[0] == 0
+
+
+def test_successful_mock_evaluate_consumes_eligibility_even_with_same_provider(
+    tmp_path, monkeypatch, capsys,
+):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    with Database(settings.db_path) as db:
+        _seed(db)
+    assert cli.main(["reprocess", "--platform", "doda"]) == 0
+
+    class LocalMockClassifier(CountingClassifier):
+        provider = "mock"
+        model_name = "fictional-mock"
+
+    monkeypatch.setattr(cli, "_classifier", lambda _: LocalMockClassifier())
+    assert cli.main(["evaluate", "--platform", "doda", "--eligible-only", "--force"]) == 0
+    assert cli.main(["evaluate", "--platform", "doda", "--eligible-only",
+                     "--replace-provider", "mock", "--dry-run"]) == 0
+    assert "Selected Scouts: 0" in capsys.readouterr().out
+    with Database(settings.db_path, read_only=True) as db:
+        assert db.get_scouts_for_evaluation(
+            platform="doda", eligible_only=True, replace_provider="mock",
+        ) == []
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM local_reprocess WHERE decision='classifier_candidate'"
+        ).fetchone()[0] == 0
+
+
+def test_failed_evaluate_keeps_eligible_mock_for_retry(tmp_path, monkeypatch, capsys):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    with Database(settings.db_path) as db:
+        _seed(db)
+    assert cli.main(["reprocess", "--platform", "doda"]) == 0
+
+    class FailingClassifier(CountingClassifier):
+        def classify(self, scout):
+            raise RuntimeError("fictional classifier failure")
+
+    monkeypatch.setattr(cli, "_classifier", lambda _: FailingClassifier())
+    assert cli.main(["evaluate", "--platform", "doda", "--eligible-only",
+                     "--replace-provider", "mock"]) == 1
+    with Database(settings.db_path, read_only=True) as db:
+        selected = db.get_scouts_for_evaluation(
+            platform="doda", eligible_only=True, replace_provider="mock",
+        )
+        assert {scout.id for _, scout in selected} == {"cloud", "generic"}
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM local_reprocess WHERE decision='classifier_candidate'"
+        ).fetchone()[0] == 2
+
+
+def test_incomplete_batch_consumes_only_successful_eligibility(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    with Database(settings.db_path) as db:
+        _seed(db)
+    assert cli.main(["reprocess", "--platform", "doda"]) == 0
+
+    class IncompleteBatchClassifier(CountingClassifier):
+        def classify_many(self, scouts):
+            scout_id, _ = scouts[0]
+            return {scout_id: Evaluation(
+                verdict="SKIP", confidence=0.8, summary="虚构的本地测试结果。",
+            )}
+
+    monkeypatch.setattr(cli, "_classifier", lambda _: IncompleteBatchClassifier())
+    assert cli.main(["evaluate", "--platform", "doda", "--eligible-only",
+                     "--replace-provider", "mock"]) == 1
+    with Database(settings.db_path, read_only=True) as db:
+        remaining = db.get_scouts_for_evaluation(
+            platform="doda", eligible_only=True, replace_provider="mock",
+        )
+        assert [scout.id for _, scout in remaining] == ["generic"]
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM local_reprocess WHERE decision='classifier_candidate'"
+        ).fetchone()[0] == 1
+
+
+def test_reprocess_rearms_completed_candidate_without_changing_evaluation(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    with Database(settings.db_path) as db:
+        _seed(db)
+    assert cli.main(["reprocess", "--platform", "doda"]) == 0
+    monkeypatch.setattr(cli, "_classifier", lambda _: CountingClassifier())
+    assert cli.main(["evaluate", "--platform", "doda", "--eligible-only",
+                     "--replace-provider", "mock"]) == 0
+    with Database(settings.db_path, read_only=True) as db:
+        before = {row["external_id"]: (row["provider"], row["payload"])
+                  for row in db.conn.execute(
+                      "SELECT s.external_id,e.provider,e.payload FROM scouts s "
+                      "JOIN evaluations e ON e.scout_id=s.id"
+                  )}
+        assert db.get_scouts_for_evaluation(platform="doda", eligible_only=True, force=True) == []
+
+    assert cli.main(["reprocess", "--platform", "doda"]) == 0
+    with Database(settings.db_path, read_only=True) as db:
+        selected = db.get_scouts_for_evaluation(platform="doda", eligible_only=True, force=True)
+        assert {scout.id for _, scout in selected} == {"cloud", "generic"}
+        after = {row["external_id"]: (row["provider"], row["payload"])
+                 for row in db.conn.execute(
+                     "SELECT s.external_id,e.provider,e.payload FROM scouts s "
+                     "JOIN evaluations e ON e.scout_id=s.id"
+                 )}
+        assert after == before
+
+
+def test_stale_candidate_marker_with_newer_mock_evaluation_is_not_eligible(tmp_path):
+    settings = _settings(tmp_path)
+    with Database(settings.db_path) as db:
+        _seed(db)
+        scout_id = db.conn.execute(
+            "SELECT id FROM scouts WHERE external_id='cloud'"
+        ).fetchone()[0]
+        db.conn.execute(
+            "INSERT INTO local_reprocess"
+            "(scout_id,platform,decision,reason,processed_at,run_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (scout_id, "doda", "classifier_candidate", "fictional old marker",
+             "2020-01-01T00:00:00", 1),
+        )
+        db.conn.commit()
+        assert db.get_scouts_for_evaluation(
+            platform="doda", replace_provider="mock", eligible_only=True,
+        ) == []
+        assert len(db.get_scouts_for_evaluation(platform="doda", force=True)) == 5

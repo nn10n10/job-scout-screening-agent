@@ -170,6 +170,22 @@ CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform mynavi
 
 扫描默认最多检查最近 100 个职位、只处理最近 14 天；连续 30 个已处理 ID 且无待续扫记录可提前停止。`scan_audit` 逐职位保存列表决定、详情决定、原因与是否读取详情；本地排除为 0 token，已处理职位不会再次分类。候选资格也保存在 SQLite，可供以后 `evaluate --platform mynavi --eligible-only --replace-provider mock` 精确重评。当前只实现页面明确标为「企業からのスカウト受信一覧」的企业列表；另有「転職エージェントからのスカウト」入口，但未将其混入企业列表。是否属于人工直邀或自动群发没有可靠 DOM 证据时为 unknown（`is_bulk_like=null`）。详情导航可能自然变为已读；程序不会主动标记已读、応募、キープ或辞退。
 
+## 每日一键扫描
+
+专用 Windows Chrome 已登录四个平台且开启 CDP 时，只需执行：
+
+```bash
+python -m scout_agent daily
+```
+
+按 Green → type → doda → マイナビ 的顺序增量扫描。已完成职位不会再打开详情；新职位先经过各平台现有本地筛选与 hard rule，只有未评价候选才交给 `.env` 指定的 `CLASSIFIER_PROVIDER`。Codex 会按 `CODEX_BATCH_SIZE` 跨平台批量评价；成功结果逐条持久化，未完成记录下次续跑。某个平台失败时其余平台继续，错误记录在统一的 HTML/JSON 每日报告中；返回码为非零表示存在部分失败。每日默认报告只展开 KEEP/MAYBE，SKIP 仅显示数量；原有逐平台 `scan_audit` 继续保留。
+
+```bash
+python -m scout_agent daily --dry-run
+```
+
+`--dry-run` 只读检查执行顺序及待续跑数量，不连接浏览器、不调用模型、不写数据库或评价，也不生成报告。`daily` 只支持 `BROWSER_MODE=cdp`，不会启动备用 Chromium。浏览详情可能自然变为已读；不会主动回复、応募、收藏或改动账号状态。
+
 ## 扩展其他 Adapter
 
 `forkwell`、`lapras` 等仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。

@@ -19,7 +19,9 @@ from scout_agent.platforms.type_jp import (
     prefilter_jobs,
     prefilter_title,
     title_is_clear_non_target,
+    type_detail_local_skip_reason,
     type_post_detail_hard_rule,
+    type_ses_hard_rule,
 )
 from scout_agent.storage.db import Database
 
@@ -196,6 +198,84 @@ def test_type_post_detail_hard_rule_requires_jd_evidence():
     )) is None
 
 
+@pytest.mark.parametrize("title,jd", [
+    ("Webエンジニア", "Webアプリケーションの開発を担当。"),
+    ("サーバーサイドエンジニア", "業務系システムの開発案件を担当。AWS を使用。"),
+    ("アーキテクトエンジニア", "自動車関連の組み込み開発プロジェクトをメインに担当。"),
+    ("ITサポート", "ITサポート事務としてヘルプデスクを担当。"),
+    ("初級ITエンジニア", "1ヶ月の研修後にプロジェクトへ配属。案件例：サーバ監視、ヘルプデスク。"),
+])
+def test_type_detail_local_skip_requires_non_target_primary_duty(title, jd):
+    assert type_detail_local_skip_reason(Scout(platform="type", job_title=title, jd_text=jd))
+
+
+def test_type_detail_local_skip_keeps_mixed_or_infra_primary_duties():
+    mixed = Scout(
+        platform="type", job_title="ITエンジニア",
+        jd_text="Webアプリ開発、ヘルプデスク、ネットワーク/サーバー/クラウドの設計・構築から配属。",
+    )
+    infra = Scout(
+        platform="type", job_title="インフラエンジニア",
+        jd_text="ネットワークとサーバの設計・構築が中心。ヘルプデスクにも対応。",
+    )
+    assert type_detail_local_skip_reason(mixed) is None
+    assert type_detail_local_skip_reason(infra) is None
+
+
+def test_type_ses_hard_rule_requires_site_and_strong_signal_for_infra():
+    scout = Scout(
+        platform="type", job_title="インフラエンジニア｜還元率83％",
+        jd_text="AWS 基盤の設計・構築を担当。案件は100％選択制。",
+        location_text="首都圏のプロジェクト先に配属。",
+    )
+    assert type_ses_hard_rule(scout).verdict == "SKIP"
+    assert type_ses_hard_rule(scout.model_copy(update={
+        "location_text": "自社内勤務。客先常駐なし。受託開発中心。",
+    })) is None
+    assert type_ses_hard_rule(scout.model_copy(update={
+        "job_title": "インフラエンジニア",
+        "jd_text": "AWS 基盤の設計・構築を担当。直請けのチーム案件あり。",
+    })) is None
+
+
+def test_type_ses_hard_rule_skips_ambiguous_project_assignment():
+    scout = Scout(
+        platform="type", job_title="ITエンジニア",
+        jd_text="Web開発やクラウド構築など複数の職種から、研修後にプロジェクトへ配属。",
+    )
+    assert type_detail_local_skip_reason(scout) is None
+    assert type_ses_hard_rule(scout).verdict == "SKIP"
+    inhouse = Scout(
+        platform="type", job_title="ITエンジニア｜還元率80％",
+        jd_text="社内業務の開発とインフラ構築を担当。",
+        location_text="自社内勤務。客先常駐なし。受託中心。",
+    )
+    assert type_ses_hard_rule(inhouse) is None
+
+
+def test_type_ses_hard_rule_accepts_pool_plus_two_commercial_signals_without_site():
+    scout = Scout(
+        platform="type", job_title="インフラエンジニア",
+        jd_text="AWS 基盤の設計・構築を担当。常時1,200件の案件から希望に合う案件をご紹介。",
+        salary_text="単価連動型、還元率82％。待機時給与保証あり。",
+        location_text="全国からリモート勤務可。",
+    )
+    result = type_ses_hard_rule(scout)
+    assert result is not None and result.verdict == "SKIP"
+    assert "案件池介绍配属" in result.reasons[0]
+    assert "単価連動" in result.reasons[0] and "還元率" in result.reasons[0]
+    assert result.client_site is None
+    assert type_ses_hard_rule(scout.model_copy(update={
+        "salary_text": "還元率82％。",
+    })) is None
+    assert type_ses_hard_rule(scout.model_copy(update={
+        "jd_text": "AWS 基盤の設計・構築を担当。受託・直請けのチーム案件あり。",
+    })) is None
+    assert type_ses_hard_rule(scout.model_copy(update={
+        "location_text": "自社内勤務。客先常駐なし。",
+    })) is None
+
+
 def _ref(index: int, received_on: date) -> TypeScoutRef:
     return TypeScoutRef(
         external_id=f"offer_dm:{10000000 + index}",
@@ -284,6 +364,44 @@ def test_type_scan_mock_dedupes_second_run_without_classifier_or_detail(tmp_path
     assert len(FakeTypeAdapter.detail_calls) == 15
     assert "New scouts: 0" in capsys.readouterr().out
     assert page.closed
+
+
+@pytest.mark.parametrize("title,jd,location,model_name", [
+    ("Webエンジニア", "Webアプリケーションの開発を担当。", "自社内勤務。",
+     "type-detail-prefilter"),
+    ("インフラエンジニア｜還元率83％",
+     "AWS 基盤の設計・構築を担当。案件は100％選択制。",
+     "首都圏のプロジェクト先に配属。", "type-ses-hard-rule"),
+])
+def test_type_scan_local_rules_do_not_construct_classifier(
+    tmp_path, monkeypatch, title, jd, location, model_name,
+):
+    today = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    ref = TypeScoutRef(**{
+        **_ref(21, today).__dict__, "job_title": title, "job_titles": (title,),
+    })
+    _mock_type_scan(tmp_path, monkeypatch, [ref])
+
+    class LocalOnlyAdapter(FakeTypeAdapter):
+        def get_scout_detail(self, _page, selected, *, include_indices=None):
+            return [{
+                "id": selected.external_id, "platform": "type",
+                "company_name": "架空基盤社", "job_title": title,
+                "jd_text": jd, "location_text": location,
+                "received_on": selected.received_on, "url": selected.url,
+                "_list_index": 0,
+            }]
+
+    monkeypatch.setitem(cli.ADAPTERS, "type", LocalOnlyAdapter)
+    monkeypatch.setattr(cli, "_classifier", lambda _settings: (_ for _ in ()).throw(
+        AssertionError("local skip must not construct a classifier")
+    ))
+    assert cli.main(["scan", "--platform", "type"]) == 0
+    with Database(tmp_path / "data" / "scouts.db", read_only=True) as db:
+        row = db.conn.execute("SELECT provider,model_name,payload FROM evaluations").fetchone()
+        assert row["provider"] == "local"
+        assert row["model_name"] == model_name
+        assert Evaluation.model_validate_json(row["payload"]).verdict == "SKIP"
 
 
 def test_type_skips_old_items_without_opening_their_details(tmp_path, monkeypatch, capsys):
