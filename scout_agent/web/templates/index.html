@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Job Scout · 结果浏览</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <p class="eyebrow">JOB SCOUT · READ-ONLY</p>
+      <h1>职位评价 Dashboard</h1>
+      <p class="intro">仅展示本地 SQLite 中已有的结果；这里不会扫描网站或运行分类模型。</p>
+    </header>
+
+    <section class="dashboard-summary" aria-label="当前筛选摘要">
+      <p class="active-filters">
+        {% for label in scope.labels %}<span>{{ label }}</span>{% if not loop.last %}<span aria-hidden="true"> · </span>{% endif %}{% endfor %}
+      </p>
+      <div class="summary-metrics">
+        <div class="summary-metric summary-total"><span>{{ scope.total_label }}</span><strong id="summary-total">{{ summary.total }}</strong></div>
+        <div class="summary-metric summary-keep"><span>KEEP</span><strong id="summary-keep">{{ summary.keep }}</strong></div>
+        <div class="summary-metric summary-maybe"><span>MAYBE</span><strong id="summary-maybe">{{ summary.maybe }}</strong></div>
+        {% if scope.show_skip %}<div class="summary-metric summary-skip"><span>SKIP</span><strong id="summary-skip">{{ summary.skip }}</strong></div>{% endif %}
+      </div>
+      {% if summary.platforms %}
+        <p class="platform-summary" aria-label="平台结果数">
+          {% for item in summary.platforms %}<span>{{ item.platform }} {{ item.count }}</span>{% if not loop.last %}<span aria-hidden="true"> · </span>{% endif %}{% endfor %}
+        </p>
+      {% endif %}
+    </section>
+
+    <form class="filters" method="get" action="/" aria-label="筛选职位评价">
+      <label class="field field-keyword">关键词
+        <input type="search" name="q" value="{{ filters.q }}" maxlength="200" placeholder="公司或职位标题">
+      </label>
+      <label class="field">平台
+        <select name="platform">
+          {% for option in platform_options %}
+            <option value="{{ option }}" {% if filters.platform == option %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">结果
+        <select name="verdict">
+          {% for option in verdict_options %}
+            <option value="{{ option }}" {% if filters.verdict == option %}selected{% endif %}>{{ 'KEEP + MAYBE' if option == 'KEEP,MAYBE' else option }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">分类器
+        <select name="provider">
+          {% for option in provider_options %}
+            <option value="{{ option }}" {% if filters.provider == option %}selected{% endif %}>{{ 'Final · 正式结果' if option == 'Final' else ('All · 含测试' if option == 'All' else option) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">收到时间
+        <select name="days">
+          {% for option in day_options %}
+            <option value="{{ option }}" {% if filters.days == option %}selected{% endif %}>{{ option ~ ' 天' if option != 'all' else 'All' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="filter-actions">
+        <button type="submit">筛选</button>
+        <a href="/">重置</a>
+      </div>
+    </form>
+
+    {% if cards %}
+      <p class="count">显示 {{ cards|length }} 条评价 · 按收到时间从新到旧 · 最多 100 条</p>
+      <section class="cards" aria-label="职位评价">
+        {% for card in cards %}
+          <article class="card card-{{ card.verdict|lower }}">
+            <div class="card-primary">
+              <div class="card-top">
+                <span class="verdict verdict-{{ card.verdict|lower }}">{{ card.verdict }}</span>
+                {% if card.provider == 'mock' %}<span class="mock-note">测试/非正式评价</span>{% endif %}
+              </div>
+              <p class="company">{{ card.company or '公司未注明' }}</p>
+              <h2>{{ card.job_title or '职位未注明' }}</h2>
+            </div>
+            <div class="card-secondary">
+              {% if card.salary %}<span>薪资：{{ card.salary }}</span>{% endif %}
+              {% if card.location %}<span>地点：{{ card.location }}</span>{% endif %}
+              {% if card.remote_evidence %}<span>远程：{{ card.remote_evidence }}</span>{% endif %}
+              <span>平台：{{ card.platform }}</span>
+              <span>分类：{{ card.provider }}</span>
+              <span>收到：{{ card.received_date or '未确认' }}</span>
+              <span class="evaluation-time">评价：{{ card.evaluated_at }}</span>
+            </div>
+            <div class="card-tertiary">
+              <p class="summary">{{ card.summary }}</p>
+              {% if card.concerns_preview %}
+                <div class="concerns-preview">
+                  <p>需确认</p>
+                  <ul>{% for concern in card.concerns_preview %}<li>{{ concern }}</li>{% endfor %}</ul>
+                </div>
+              {% endif %}
+            </div>
+            <div class="card-footer">
+              <div class="links">
+                <a class="detail-action" href="{{ url_for('job_detail', scout_id=card.scout_id) }}">筛选详情</a>
+                {% if card.detail_url %}
+                  <a href="{{ card.detail_url }}" target="_blank" rel="noopener noreferrer">查看职位 ↗</a>
+                {% endif %}
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% else %}
+      <section class="empty-state" aria-label="暂无评价">
+        <h2>没有符合条件的评价</h2>
+        <p>可调整筛选条件；如果数据库尚为空，完成一次扫描后结果会显示在这里。</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

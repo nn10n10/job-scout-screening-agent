@@ -105,12 +105,19 @@ def main(
     reprocess.add_argument("--dry-run", action="store_true", help="Show decisions without writing")
     sub.add_parser("report", help="Regenerate report for latest completed scan")
     sub.add_parser("status", help="Show local setup and database status")
+    sub.add_parser("web", help="Serve the local read-only WebUI on 127.0.0.1:8765")
     args = parser.parse_args(argv)
     if args.command == "evaluate" and args.force and args.replace_provider:
         parser.error("--force and --replace-provider cannot be combined")
     if args.command == "evaluate" and args.eligible_only and not args.platform:
         parser.error("--eligible-only requires --platform")
     settings = load_settings()
+
+    if args.command == "web":
+        from scout_agent.web.app import run_web
+
+        run_web(settings.db_path)
+        return 0
 
     if args.command == "daily":
         from scout_agent.daily import run_daily

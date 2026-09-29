@@ -186,6 +186,18 @@ python -m scout_agent daily --dry-run
 
 `--dry-run` 只读检查执行顺序及待续跑数量，不连接浏览器、不调用模型、不写数据库或评价，也不生成报告。`daily` 只支持 `BROWSER_MODE=cdp`，不会启动备用 Chromium。浏览详情可能自然变为已读；不会主动回复、応募、收藏或改动账号状态。
 
+## 本地只读 WebUI
+
+```bash
+python -m scout_agent web
+```
+
+在本机打开 `http://127.0.0.1:8765`。Dashboard 默认显示最近 7 天收到的正式评价（`Final`、KEEP/MAYBE），按接收日期从新到旧、最多展示 100 条；可用 URL 查询参数筛选公司/职位关键词、平台、verdict、provider 与 1/7/14/30 天或全部时间，例如 `/?platform=type&verdict=MAYBE&days=7&q=infra`。筛选和顶部统计均在 SQLite 查询中完成，统计不受 100 条卡片上限影响。`Final` 不包含开发用 Mock；显式选择 `mock` 或 `All` 仍可查看，并会标为“测试/非正式评价”。接收日期缺失的 Green 记录只在 `days=all` 中出现；doda 使用首次观察日期与网站给出的天数推算。
+
+卡片显示公司、职位、薪资、地点、明确的 Remote/Hybrid 证据、接收日期、摘要及最多两条疑点预览；「筛选详情」显示已有评价的完整理由与疑点，但不展示原始 Scout 私信或 JD。安全的、已存储的 HTTP(S) 职位 URL 可在新标签页打开。
+
+数据库不存在或没有匹配评价时显示空状态。WebUI 不连接招聘网站、不运行模型、不提供応募、回复、收藏或修改评价的操作，也不会创建数据库。服务器固定监听 `127.0.0.1`，不提供对外网络监听配置；无登录系统，请勿通过端口转发将其公开。
+
 ## 扩展其他 Adapter
 
 `forkwell`、`lapras` 等仍只会显示 `Adapter not implemented yet.`。后续应先人工登录并观察当前网页，再逐平台实现 `PlatformAdapter` 的 `is_logged_in`、`get_scout_list`、`get_scout_detail`、`normalize_scout`，把 URL 和 selector 建立在实际页面上。实现时只允许导航与读取。LinkedIn 不在此版本范围内。

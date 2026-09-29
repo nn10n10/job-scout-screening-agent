@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ job.job_title or '职位未注明' }} · Job Scout</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+</head>
+<body>
+  <main class="shell detail-shell">
+    <nav class="back-nav"><a href="/">← 返回 Dashboard</a></nav>
+    <article class="detail-panel">
+      <div class="detail-heading">
+        <div class="card-top">
+          <span class="verdict verdict-{{ job.verdict|lower }}">{{ job.verdict }}</span>
+          <span class="platform">{{ job.platform }}</span>
+          {% if job.provider == 'mock' %}<span class="mock-note">测试/非正式评价</span>{% endif %}
+        </div>
+        <p class="company">{{ job.company or '公司未注明' }}</p>
+        <h1>{{ job.job_title or '职位未注明' }}</h1>
+      </div>
+
+      <dl class="detail-facts">
+        <div><dt>置信度</dt><dd>{{ '%.0f'|format(job.confidence * 100) }}%</dd></div>
+        {% if job.salary %}<div><dt>薪资</dt><dd>{{ job.salary }}</dd></div>{% endif %}
+        {% if job.location %}<div><dt>地点</dt><dd>{{ job.location }}</dd></div>{% endif %}
+        <div><dt>Remote</dt><dd>{{ job.remote_evidence or '未确认' }}</dd></div>
+        <div><dt>Provider / Model</dt><dd>{{ job.provider }} / {{ job.model_name }}</dd></div>
+        <div><dt>评价时间</dt><dd>{{ job.evaluated_at }}</dd></div>
+      </dl>
+
+      <section class="detail-section">
+        <h2>摘要</h2>
+        <p>{{ job.summary }}</p>
+      </section>
+      <section class="detail-section">
+        <h2>理由</h2>
+        {% if job.reasons %}
+          <ul>{% for reason in job.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+        {% else %}<p class="muted">未记录</p>{% endif %}
+      </section>
+      <section class="detail-section">
+        <h2>疑点</h2>
+        {% if job.concerns %}
+          <ul>{% for concern in job.concerns %}<li>{{ concern }}</li>{% endfor %}</ul>
+        {% else %}<p class="muted">未记录</p>{% endif %}
+      </section>
+
+      <div class="original-link">
+        <h2>原始职位 URL</h2>
+        {% if job.detail_url %}
+          <a href="{{ job.detail_url }}" target="_blank" rel="noopener noreferrer">{{ job.detail_url }}</a>
+        {% else %}<p class="muted">链接不可用</p>{% endif %}
+      </div>
+    </article>
+  </main>
+</body>
+</html>
