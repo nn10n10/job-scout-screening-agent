@@ -122,3 +122,31 @@ def test_pool_url_strip_query():
     cards = search_cards([(Job('900001:1', 'https://www.green-japan.com/company/900001/job/1?token=secret', {}, ['AWS']),
                            SearchEvaluation(verdict='TARGET', summary='虚构岗位。'))])
     assert cards[0]['url'] == 'https://www.green-japan.com/company/900001/job/1'
+
+
+def test_safety_stop_context_redaction_and_reset(tmp_path):
+    def runner(argv, env, emit):
+        emit('Search progress: インフラエンジニア page 1')
+        emit('PRIVATE JD https://fictional.invalid/?token=secret')
+        emit('Green safety stop: source=インフラエンジニア page=1 category=SOURCE_URL_MISMATCH')
+        emit('Green safety stop: source=AWS page=2 category=secret')
+        emit('Green safety stop: source=https://fictional.invalid/?token=secret page=1 category=PARSE_ERROR')
+        return 1
+    app = create_app(tmp_path / 'fictional.db', search_runner=runner)
+    manager = app.state.search_runs
+    manager.start({'sources':['インフラエンジニア']})
+    wait(manager)
+    with TestClient(app) as client:
+        response = client.get('/search/run/status')
+        result = response.json()
+        assert result['status'] == 'failed'
+        assert result['error'] == 'green_safety_stop'
+        assert result['failed_source'] == 'インフラエンジニア'
+        assert result['failed_page'] == 1
+        assert result['safe_reason'] == 'SOURCE_URL_MISMATCH'
+        assert result['summary'][-1] == 'Search progress: インフラエンジニア page 1'
+        assert all(word not in response.text for word in ['PRIVATE', 'secret', 'https://', 'token='])
+        assert 'run.failed_source' in client.get('/search').text
+    manager.runner = lambda *args: 0
+    manager.start({'sources':['AWS']})
+    assert wait(manager)['safe_reason'] is None

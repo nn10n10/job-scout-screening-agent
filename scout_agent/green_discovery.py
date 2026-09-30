@@ -19,6 +19,11 @@ SOURCES = {
     'Kubernetes': '/search/skill/Kubernetes', 'インフラエンジニア': '/jobtype-l/190150/01',
 }
 KEYWORDS = tuple(SOURCES)
+SAFE_REASONS = frozenset({
+    'SOURCE_URL_MISMATCH', 'JOB_URL_MISMATCH', 'NO_VALID_JOB_LINKS',
+    'UNKNOWN_RESULT_COUNT', 'TITLE_MISSING', 'RESPONSIBILITIES_MISSING',
+    'PLAYWRIGHT_TIMEOUT', 'PLAYWRIGHT_ERROR', 'PARSE_ERROR', 'UNKNOWN',
+})
 NUMBER = r'[0-9０-９][0-9０-９,，]*'
 RESULT_COUNT = re.compile(
     rf'^\s*(?:(?:(?:検索結果|求人(?:数)?|該当(?:する)?求人(?:数)?|全|合計)\s*[:：]?\s*)?'

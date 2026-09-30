@@ -10,7 +10,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 
-from scout_agent.green_discovery import KEYWORDS
+from scout_agent.green_discovery import KEYWORDS, SAFE_REASONS
 
 LIMITS = {'coverage_pages': (2, 1, 15), 'max_depth': (15, 2, 100),
           'max_jobs': (30, 1, 500), 'max_model_jobs': (20, 1, 200),
@@ -61,7 +61,8 @@ class SearchRunManager:
         self.lock = threading.Lock()
         self.state = {'status': 'idle', 'started_at': None, 'finished_at': None,
                       'config': None, 'exit_code': None, 'summary': [], 'error': None,
-                      'stats': {}}
+                      'stats': {}, 'failed_source': None, 'failed_page': None,
+                      'safe_reason': None}
 
     def snapshot(self):
         with self.lock:
@@ -79,7 +80,8 @@ class SearchRunManager:
                 return False
             self.state = {'status': 'running', 'started_at': datetime.now(timezone.utc).isoformat(),
                           'finished_at': None, 'config': config, 'exit_code': None,
-                          'summary': [], 'error': None, 'stats': {}}
+                          'summary': [], 'error': None, 'stats': {},
+                          'failed_source': None, 'failed_page': None, 'safe_reason': None}
         try:
             threading.Thread(target=self._run, args=(config,), daemon=True).start()
         except Exception:
@@ -89,6 +91,15 @@ class SearchRunManager:
     def _emit(self, line):
         safe = None
         with self.lock:
+            context = re.fullmatch(
+                r'Green safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
+            if context and context[1] in (*KEYWORDS, 'NONE') and context[3] in SAFE_REASONS:
+                page = int(context[2])
+                if (context[1] == 'NONE' and page == 0) or (context[1] in KEYWORDS and page > 0):
+                    self.state.update(error='green_safety_stop',
+                                      failed_source=None if context[1] == 'NONE' else context[1],
+                                      failed_page=page or None, safe_reason=context[3])
+                return
             match = re.fullmatch(r'Codex category: ([a-z_]+)', line)
             if match and match[1] in CATEGORIES:
                 self.state['error'] = match[1]

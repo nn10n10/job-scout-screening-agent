@@ -390,15 +390,37 @@ def generate_search_report(output_dir, results, stats):
 
 
 def search_command(args, settings, *, adapter=None):
+    import sys
+    from playwright.sync_api import Error, TimeoutError
+    from scout_agent.green_discovery import SAFE_REASONS
+    source, number = 'NONE', 0
+
+    def progress(label, page):
+        nonlocal source, number
+        source, number = label, page
+        print(f'Search progress: {label} page {page}', flush=True)
+
+    try:
+        return _search_command(args, settings, adapter=adapter, progress=progress)
+    except (GreenSearchDOMPending, ValueError, Error) as exc:
+        reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
+                  'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else
+                  'PLAYWRIGHT_ERROR' if isinstance(exc, Error) else 'PARSE_ERROR')
+        if reason not in SAFE_REASONS:
+            reason = 'UNKNOWN'
+        # Context comes only from validated discovery labels, never exception text.
+        if source not in KEYWORDS:
+            source, number = 'NONE', 0
+        print(f'Green safety stop: source={source} page={number} category={reason}',
+              file=sys.stderr, flush=True)
+        return 1
+
+
+def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.browser.manager import BrowserManager
     from scout_agent.storage.db import Database
     adapter = adapter or GreenSearchAdapter()
-    try:
-        adapter.ensure_verified()
-    except GreenSearchDOMPending as exc:
-        import sys
-        print(str(exc), file=sys.stderr)
-        return 2
+    adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
     for label in args.keyword or KEYWORDS:
         source_url(label)
@@ -419,8 +441,7 @@ def search_command(args, settings, *, adapter=None):
                         pages_per_keyword=args.pages_per_keyword,
                         coverage_pages=getattr(args, 'coverage_pages', 2),
                         max_depth=getattr(args, 'max_depth', 15),
-                        progress=lambda source, number: print(
-                            f'Search progress: {source} page {number}', flush=True))
+                        progress=progress)
                 except CodexClassifierError as exc:
                     import sys
                     category = exc.category

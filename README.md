@@ -348,6 +348,10 @@ Codex 失败仅输出安全 category，不输出 JD/raw stderr。成功批次保
 
 ### WebUI 增量 Green Search
 
+安全停止时，本轮状态显示 `failed_source`、`failed_page` 与固定枚举的
+`safe_reason`，用于定位最后进入的 source/page；这不表示该页已处理完成。
+诊断不会显示原始异常、URL query 或 JD，仍保持 fail-closed。
+
 启动 `python -m scout_agent web`，打开 `http://127.0.0.1:8765/search`。
 勾选已验证 source 后点击“开始增量搜索”；默认 coverage_pages=2、max_depth=15、
 max_jobs=30、max_model_jobs=20。高级参数中的 Codex batch size 默认 2，仅影响该次子进程。
