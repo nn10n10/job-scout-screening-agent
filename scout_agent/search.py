@@ -217,7 +217,7 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
     stats = dict.fromkeys(('raw_cards', 'unique_jobs', 'list_drops', 'detail_drops', 'cache_hits', 'model_jobs', 'batches', 'details', 'deferred', 'TARGET', 'POSSIBLE', 'DROP'), 0)
     stats.update(pages_scanned=0, source_pages={}, new_jobs=0, known_jobs=0, cursors={}, discovery={})
     seen, results, pending = {}, {}, []
-    deferred_details = set()
+    deferred_jobs = set()
 
     def accept(job, result, provider):
         store.save_result(job, policy_version, result, provider,
@@ -258,7 +258,7 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
             page_complete = True
             for card in cards:
                 if card.job_id in seen:
-                    if card.job_id in deferred_details:
+                    if card.job_id in deferred_jobs:
                         page_complete = False
                     job = seen[card.job_id]
                     if keyword not in job.matched_keywords:
@@ -296,6 +296,9 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                             flush()
                     else:
                         stats['deferred'] += 1
+                        if incremental:
+                            deferred_jobs.add(card.job_id)
+                            page_complete = False
                     continue
                 if list_drop(card.fields.get('title', '')):
                     store.save_job(card)
@@ -305,7 +308,7 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                 if stats['details'] >= max_jobs:
                     stats['deferred'] += 1
                     if incremental:
-                        deferred_details.add(card.job_id)
+                        deferred_jobs.add(card.job_id)
                         page_complete = False
                         continue
                     stop = True
@@ -330,6 +333,9 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                 else:
                     # Budget exhaustion remains pending, never invent a model verdict.
                     stats['deferred'] += 1
+                    if incremental:
+                        deferred_jobs.add(card.job_id)
+                        page_complete = False
                 if not incremental and stats['TARGET'] + stats['POSSIBLE'] >= early_stop:
                     stop = True
                     page_complete = False

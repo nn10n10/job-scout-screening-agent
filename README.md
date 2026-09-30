@@ -326,6 +326,7 @@ Green probe 失败时只输出 source label、有限的 stage/reason code 和结
 AWS、SRE、DevOps、Terraform、Kubernetes、インフラエンジニア 分别保存 cursor。
 成功完成页面及其模型批次后保存 cursor，失败页面下次重试；详情/模型预算不会阻止其他 source 的 page 1 扫描。
 深页有 NEW 职位因详情预算不足而未保存时，该页不推进 cursor，也不继续该 source 后续深页；下次从该页重试。page 1 始终按每轮重扫处理。
+深页中已保存详情但因模型预算不足而未获得评价的 NEW／KNOWN 职位也会保留当前 cursor，并停止该 source 后续深页；下次直接使用已保存详情续跑模型，不重复读取详情。其他 source 的 page 1 仍会扫描。
 不使用未经验证的新着排序参数，网站操作仍仅为读取。
 
 显式 `--pages-per-keyword N` 保持旧模式：固定前 N 页、读取详情并按 content hash 复用评价，

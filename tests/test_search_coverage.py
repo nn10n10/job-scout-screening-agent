@@ -2,7 +2,7 @@
 import pytest
 
 from test_search import FakeGreen, FakeCodex, job, store
-from scout_agent.search import run_search, SearchStore, render_search
+from scout_agent.search import run_search, SearchStore, render_search, POLICY_VERSION
 from scout_agent.llm.codex import CodexClassifierError
 
 
@@ -120,6 +120,49 @@ def test_history_unknown_and_last_seen_preserved(store):
     store.save_job(job())
     row = store.conn.execute('SELECT first_seen_at,last_seen_at FROM search_jobs').fetchone()
     assert row[0] is None and row[1]
+
+
+@pytest.mark.parametrize('saved_details', [False, True])
+def test_model_budget_holds_deep_cursor_and_resumes_saved_details(store, saved_details):
+    store.advance_source('AWS', 4)
+    candidates = [job(n) for n in [4, 5, 6]]
+    if saved_details:
+        for candidate in candidates:
+            store.save_job(candidate)
+    data = {('AWS', 1): [job(1, title='Frontend')],
+            ('AWS', 4): candidates, ('AWS', 5): [job(7)],
+            ('SRE', 1): [job(100)]}
+    adapter, model = FakeGreen(data), FakeCodex()
+    _, stats = run_search(adapter, store, model, keywords=['AWS', 'SRE'],
+                         pages_per_keyword=None, max_model_jobs=1)
+    assert adapter.pages == [('AWS', 1), ('AWS', 4), ('SRE', 1), ('SRE', 2)]
+    assert stats['cursors']['AWS'] == {'before': 4, 'after': 4}
+    assert stats['model_jobs'] == 1 and stats['deferred'] == 3
+    assert adapter.reads == [job(n).job_id for n in ([100] if saved_details else [4, 5, 6, 100])]
+    assert model.batches == [[job(4).job_id]]
+    for candidate in candidates:
+        existing = store.existing_job(candidate.job_id)
+        assert existing.fields == candidate.fields
+    assert store.cached(store.existing_job(job(4).job_id), POLICY_VERSION) is not None
+    for n in [5, 6]:
+        assert store.cached(store.existing_job(job(n).job_id), POLICY_VERSION) is None
+    retry, resumed_model = FakeGreen(data), FakeCodex()
+    _, stats = coverage(retry, store, resumed_model)
+    assert retry.pages == [('AWS', 1), ('AWS', 4), ('AWS', 5)]
+    assert retry.reads == [job(7).job_id]
+    assert resumed_model.batches == [[job(5).job_id, job(6).job_id], [job(7).job_id]]
+    assert stats['model_jobs'] == 3 and stats['cache_hits'] == 2
+    assert stats['cursors']['AWS'] == {'before': 4, 'after': 6}
+
+
+def test_model_deferred_duplicate_on_deep_page_holds_cursor(store):
+    adapter = FakeGreen({('AWS', 1): [job(1), job(2)],
+                         ('AWS', 2): [job(2)], ('AWS', 3): [job(3)]})
+    _, stats = coverage(adapter, store, max_model_jobs=1)
+    assert adapter.pages == [('AWS', 1), ('AWS', 2)]
+    assert adapter.reads == [job(1).job_id, job(2).job_id]
+    assert stats['deferred'] == 1
+    assert stats['cursors']['AWS'] == {'before': 2, 'after': 2}
 
 
 def test_default_depth_wrap_and_partial_success(store):
