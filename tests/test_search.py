@@ -380,6 +380,8 @@ def test_search_cli_model_failure_resumable(tmp_path, monkeypatch, capsys, failu
     assert search_command(args, settings, adapter=adapter) == 1
     output = capsys.readouterr()
     assert '下次续跑' in output.err
+    expected = {'auth': 'authentication', 'invalid_batch': 'invalid_json'}.get(failure, failure)
+    assert f'Codex category: {expected}' in output.err
     assert 'PRIVATE' not in output.err and 'Traceback' not in output.err
     page.close.assert_called_once()
     assert not settings.output_path.exists()

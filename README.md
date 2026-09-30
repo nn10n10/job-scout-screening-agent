@@ -316,3 +316,32 @@ Green probe 失败时只输出 source label、有限的 stage/reason code 和结
 不记录或输出 query 内容。第 2 页及以后必须确认最终 query 的 `page` 与请求页码一致，
 缺失或冲突时安全停止。仍拒绝跨域、HTTP、userinfo、空 query 的 `/search` 及其他路径。
 自动测试通过不代表 live verified；live probe 尚需用户本机执行。
+
+
+### TASK-004：Green 增量新岗发现（V0.1）
+
+默认 `search green` 每个 source 固定扫描 page 1，再轮转 2 个深页：
+首次 1 + 2 + 3，下次 1 + 4 + 5。`--coverage-pages 2` 控制深页数量，
+`--max-depth 15` 控制最大页码（至少 2），扫描到上限或明确空页后从 page 2 重启。
+AWS、SRE、DevOps、Terraform、Kubernetes、インフラエンジニア 分别保存 cursor。
+成功完成页面及其模型批次后保存 cursor，失败页面下次重试；详情/模型预算不会阻止其他 source 的 page 1 扫描。
+深页有 NEW 职位因详情预算不足而未保存时，该页不推进 cursor，也不继续该 source 后续深页；下次从该页重试。page 1 始终按每轮重扫处理。
+深页中已保存详情但因模型预算不足而未获得评价的 NEW／KNOWN 职位也会保留当前 cursor，并停止该 source 后续深页；下次直接使用已保存详情续跑模型，不重复读取详情。其他 source 的 page 1 仍会扫描。
+不使用未经验证的新着排序参数，网站操作仍仅为读取。
+
+显式 `--pages-per-keyword N` 保持旧模式：固定前 N 页、读取详情并按 content hash 复用评价，
+不推进轮转 cursor。未指定该参数才启用增量模式。
+增量模式已见 job_id 更新 last_seen 和 matched source，复用保存的详情/评价；
+失败或预算待处理的模型评价直接使用保存的详情续跑。历史 first_seen 保持 NULL，不能据此推测首次发现日期。
+预算内尚未读取详情的卡片不入库，下次覆盖该页时再尝试。
+
+报告优先 NEW TARGET、NEW POSSIBLE，KNOWN 已有评价只计数，未完成评价的 KNOWN 可显示续跑结果。
+统计包含 pages_scanned、source_pages（每 source 实际成功读取的列表页）、new_jobs、known_jobs、cache_hits、model_jobs、deferred 以及每 source cursor before → after。CLI 和报告显示如 `AWS pages: 1,2,3`，便于连续运行验收；列表读取成功不代表该页详情覆盖已完成。
+**本轮未实现自动刷新旧 JD，不自动检测内容变化或 UPDATED/重新出现事件；KNOWN 表示曾入库，不表示职位没有变化。**
+需要检查旧 JD 时可显式使用旧页数模式；该模式仍按内容 hash 复用缓存。
+筛选保持 recall-first，不收紧投递规则。
+
+Search 不稳定或首次运行时可配置较小 `CODEX_BATCH_SIZE=2`；全局默认不变。
+Codex 失败仅输出安全 category，不输出 JD/raw stderr。成功批次保留，失败批次下次续跑。
+代码验证只使用虚构数据和 mocked 模型；真实验收由用户本机已有 Chrome CDP 连续两次小预算 AWS Search 完成，
+确认 page 1 固定、深页前进、KNOWN 不重复大量送模型。真实验收前不发送 `[SUPERVISOR][APPROVED]`，Bridge 不 merge。
