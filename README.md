@@ -325,6 +325,7 @@ Green probe 失败时只输出 source label、有限的 stage/reason code 和结
 `--max-depth 15` 控制最大页码（至少 2），扫描到上限或明确空页后从 page 2 重启。
 AWS、SRE、DevOps、Terraform、Kubernetes、インフラエンジニア 分别保存 cursor。
 成功完成页面及其模型批次后保存 cursor，失败页面下次重试；详情/模型预算不会阻止其他 source 的 page 1 扫描。
+深页有 NEW 职位因详情预算不足而未保存时，该页不推进 cursor，也不继续该 source 后续深页；下次从该页重试。page 1 始终按每轮重扫处理。
 不使用未经验证的新着排序参数，网站操作仍仅为读取。
 
 显式 `--pages-per-keyword N` 保持旧模式：固定前 N 页、读取详情并按 content hash 复用评价，
@@ -334,7 +335,7 @@ AWS、SRE、DevOps、Terraform、Kubernetes、インフラエンジニア 分别
 预算内尚未读取详情的卡片不入库，下次覆盖该页时再尝试。
 
 报告优先 NEW TARGET、NEW POSSIBLE，KNOWN 已有评价只计数，未完成评价的 KNOWN 可显示续跑结果。
-统计包含 pages_scanned、new_jobs、known_jobs、cache_hits、model_jobs、deferred 以及每 source cursor before → after。
+统计包含 pages_scanned、source_pages（每 source 实际成功读取的列表页）、new_jobs、known_jobs、cache_hits、model_jobs、deferred 以及每 source cursor before → after。CLI 和报告显示如 `AWS pages: 1,2,3`，便于连续运行验收；列表读取成功不代表该页详情覆盖已完成。
 **本轮未实现自动刷新旧 JD，不自动检测内容变化或 UPDATED/重新出现事件；KNOWN 表示曾入库，不表示职位没有变化。**
 需要检查旧 JD 时可显式使用旧页数模式；该模式仍按内容 hash 复用缓存。
 筛选保持 recall-first，不收紧投递规则。

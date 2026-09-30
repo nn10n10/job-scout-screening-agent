@@ -215,8 +215,9 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
     if min(max_jobs, max_model_jobs, batch_size, pages_per_keyword or 1, early_stop) < 1:
         raise ValueError('搜索预算必须为正整数。')
     stats = dict.fromkeys(('raw_cards', 'unique_jobs', 'list_drops', 'detail_drops', 'cache_hits', 'model_jobs', 'batches', 'details', 'deferred', 'TARGET', 'POSSIBLE', 'DROP'), 0)
-    stats.update(pages_scanned=0, new_jobs=0, known_jobs=0, cursors={}, discovery={})
+    stats.update(pages_scanned=0, source_pages={}, new_jobs=0, known_jobs=0, cursors={}, discovery={})
     seen, results, pending = {}, {}, []
+    deferred_details = set()
 
     def accept(job, result, provider):
         store.save_result(job, policy_version, result, provider,
@@ -252,10 +253,13 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
         for page in pages:
             cards = adapter.search_cards(keyword, page)
             stats['pages_scanned'] += 1
+            stats['source_pages'].setdefault(keyword, []).append(page)
             stats['raw_cards'] += len(cards)
             page_complete = True
             for card in cards:
                 if card.job_id in seen:
+                    if card.job_id in deferred_details:
+                        page_complete = False
                     job = seen[card.job_id]
                     if keyword not in job.matched_keywords:
                         job.matched_keywords.append(keyword)
@@ -301,6 +305,8 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                 if stats['details'] >= max_jobs:
                     stats['deferred'] += 1
                     if incremental:
+                        deferred_details.add(card.job_id)
+                        page_complete = False
                         continue
                     stop = True
                     page_complete = False
@@ -339,6 +345,9 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                     next_page = 2 if wrapped else page + 1
                     store.advance_source(keyword, next_page, wrapped)
                     stats['cursors'][keyword]['after'] = next_page
+            if incremental and page > 1 and not page_complete:
+                # Retry this coverage gap before scanning any later deep page.
+                break
             if stop or (not incremental and stats['TARGET'] + stats['POSSIBLE'] >= early_stop):
                 stop = True
                 break
@@ -422,6 +431,10 @@ def search_command(args, settings, *, adapter=None):
               'batches': '模型调用批次数', 'details': '已读取详情', 'deferred': '预算待处理'}
     for key, value in stats.items():
         if key == 'discovery':
+            continue
+        if key == 'source_pages':
+            for source, pages in value.items():
+                print(f"{source} pages: {','.join(map(str, pages))}")
             continue
         if key == 'cursors':
             for source, cursor in value.items():

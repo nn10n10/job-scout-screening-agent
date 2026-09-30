@@ -21,9 +21,12 @@ def test_rotation_and_known_zero_details(store):
     assert first.pages == [('AWS', 1), ('AWS', 2), ('AWS', 3)]
     assert stats['new_jobs'] == stats['model_jobs'] == 3
     assert stats['cursors']['AWS'] == {'before': 2, 'after': 4}
+    assert stats['source_pages'] == {'AWS': [1, 2, 3]}
     second = FakeGreen(dataset())
     results, stats = coverage(second, store)
     assert second.pages == [('AWS', 1), ('AWS', 4), ('AWS', 5)]
+    assert stats['source_pages'] == {'AWS': [1, 4, 5]}
+    assert 'AWS pages: 1,4,5' in render_search(results, stats)
     assert second.reads == [job(4).job_id, job(5).job_id]
     assert stats['new_jobs'] == 2 and stats['known_jobs'] == stats['cache_hits'] == 1
     assert stats['model_jobs'] == 2 and stats['pages_scanned'] == 3
@@ -82,8 +85,30 @@ def test_budget_still_scans_all_sources_page_one(store):
                         {('SRE', p): [job(100+p)] for p in range(1, 4)})
     _, stats = run_search(adapter, store, FakeCodex(), keywords=['AWS', 'SRE'],
                          pages_per_keyword=None, max_jobs=1, max_model_jobs=1)
-    assert adapter.pages == [('AWS', 1), ('AWS', 2), ('AWS', 3), ('SRE', 1), ('SRE', 2), ('SRE', 3)]
-    assert stats['details'] == stats['model_jobs'] == 1 and stats['deferred'] == 5
+    assert adapter.pages == [('AWS', 1), ('AWS', 2), ('SRE', 1), ('SRE', 2)]
+    assert stats['details'] == stats['model_jobs'] == 1 and stats['deferred'] == 3
+    assert stats['cursors'] == {source: {'before': 2, 'after': 2} for source in ['AWS', 'SRE']}
+
+
+def test_partial_deep_page_retries_before_later_pages(store):
+    store.advance_source('AWS', 4)
+    data = {('AWS', 1): [job(1, title='Frontend')],
+            ('AWS', 4): [job(4), job(5), job(6)],
+            ('AWS', 5): [job(7)], ('SRE', 1): [job(100)]}
+    adapter, model = FakeGreen(data), FakeCodex()
+    _, stats = run_search(adapter, store, model, keywords=['AWS', 'SRE'],
+                         pages_per_keyword=None, max_jobs=1)
+    assert adapter.pages == [('AWS', 1), ('AWS', 4), ('SRE', 1), ('SRE', 2)]
+    assert stats['cursors']['AWS'] == {'before': 4, 'after': 4}
+    assert adapter.reads == [job(4).job_id]
+    assert model.batches == [[job(4).job_id]]
+    for n in [5, 6, 7, 100]:
+        assert store.existing_job(job(n).job_id) is None
+    retry = FakeGreen(data)
+    _, stats = coverage(retry, store)
+    assert retry.pages == [('AWS', 1), ('AWS', 4), ('AWS', 5)]
+    assert retry.reads == [job(n).job_id for n in [5, 6, 7]]
+    assert stats['cursors']['AWS'] == {'before': 4, 'after': 6}
 
 
 def test_history_unknown_and_last_seen_preserved(store):
@@ -118,3 +143,35 @@ def test_duplicate_deferred_card_does_not_save_incomplete_detail(store):
     _, stats = coverage(adapter, store, max_jobs=1)
     assert stats['deferred'] == 1
     assert store.existing_job(job(2).job_id) is None
+    assert adapter.pages == [('AWS', 1), ('AWS', 2)]
+    assert stats['cursors']['AWS'] == {'before': 2, 'after': 2}
+
+
+def test_cli_outputs_actual_source_pages(tmp_path, monkeypatch, capsys):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from scout_agent.search import search_command, SearchCodex
+
+    adapter = FakeGreen(dataset())
+    adapter.ensure_verified = lambda: None
+    page = Mock()
+
+    @contextmanager
+    def fake_open(self):
+        yield SimpleNamespace(contexts=[SimpleNamespace(new_page=lambda: page)])
+
+    monkeypatch.setattr('scout_agent.browser.manager.BrowserManager.open', fake_open)
+    monkeypatch.setattr(SearchCodex, 'classify_jobs',
+                        lambda self, jobs: FakeCodex().classify_jobs(jobs))
+    settings = SimpleNamespace(browser_mode='cdp', profile_path=tmp_path / 'unused',
+        cdp_endpoint='http://fictional.invalid', db_path=tmp_path / 'fictional.db',
+        output_path=tmp_path / 'fictional-reports', codex_model='fictional', codex_batch_size=8)
+    args = SimpleNamespace(keyword=['AWS'], max_jobs=30, max_model_jobs=20,
+                           pages_per_keyword=None, coverage_pages=2, max_depth=15)
+    for pages, cursor in [('1,2,3', '2 → 4'), ('1,4,5', '4 → 6')]:
+        assert search_command(args, settings, adapter=adapter) == 0
+        output = capsys.readouterr()
+        assert f'AWS pages: {pages}' in output.out
+        assert f'AWS cursor: {cursor}' in output.out
+        assert output.err == ''
