@@ -10,10 +10,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from scout_agent.browser.manager import BrowserManager, CDPConnectionError
 from scout_agent.config import load_settings
-from scout_agent.llm.codex import CodexClassifier, CodexClassifierError, codex_auth_mode, codex_cli_available
 from scout_agent.llm.base import MISSING_MESSAGE_CONCERN, validate_explanations
-from scout_agent.llm.gemini import GeminiClassifier
-from scout_agent.llm.mock import MockClassifier
 from scout_agent.local_reprocess import LOCAL_RULES, reprocess_stored_scout
 from scout_agent.models.scout import Scout
 from scout_agent.models.evaluation import Evaluation
@@ -23,11 +20,38 @@ from scout_agent.platforms.type_jp import (
     type_post_detail_hard_rule, type_ses_hard_rule,
 )
 from scout_agent.platforms.doda import doda_detail_prefilter
-from scout_agent.report.generator import generate_report
-from scout_agent.storage.db import Database
+
+
+# Keep probe/help paths independent of provider, storage and report imports.
+_LAZY_IMPORTS = {
+    "CodexClassifier": "scout_agent.llm.codex",
+    "CodexClassifierError": "scout_agent.llm.codex",
+    "codex_auth_mode": "scout_agent.llm.codex",
+    "codex_cli_available": "scout_agent.llm.codex",
+    "GeminiClassifier": "scout_agent.llm.gemini",
+    "MockClassifier": "scout_agent.llm.mock",
+    "generate_report": "scout_agent.report.generator",
+    "Database": "scout_agent.storage.db",
+}
+
+
+def __getattr__(name):
+    if name in _LAZY_IMPORTS:
+        from importlib import import_module
+        value = getattr(import_module(_LAZY_IMPORTS[name]), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(name)
+
+
+def _load_runtime():
+    for name in _LAZY_IMPORTS:
+        if name not in globals():
+            __getattr__(name)
 
 
 def _classifier(settings):
+    _load_runtime()
     if settings.classifier_provider == "mock":
         print("Classifier provider: mock.")
         return MockClassifier()
@@ -90,10 +114,12 @@ def main(
     sub.add_parser("browser", help="Inspect existing Chrome tabs (CDP) or open legacy persistent Chromium")
     search = sub.add_parser("search", help="Green 主动搜索候选池（只读，TARGET + POSSIBLE）")
     search.add_argument("platform", choices=["green"], nargs="?", default="green", help="仅支持 Green")
-    search.add_argument("--max-jobs", type=_positive_int, default=30, help="独立职位详情上限（默认 30）")
+    search.add_argument("--max-jobs", type=_positive_int, default=None, help="独立职位详情上限（正式默认 30；probe 默认/最大 5）")
     search.add_argument("--max-model-jobs", type=_positive_int, default=20, help="Codex 职位预算（默认 20）")
-    search.add_argument("--pages-per-keyword", type=_positive_int, default=2, help="每关键词页数上限（默认 2）")
-    search.add_argument("--keyword", action="append", help="搜索关键词，可重复；默认 AWS / クラウドエンジニア / SRE / DevOps / Platform Engineer / インフラエンジニア")
+    search.add_argument("--pages-per-keyword", type=_positive_int, default=2, help="每 source 页数上限（默认 2；probe 固定第一页）")
+    from scout_agent.green_discovery import KEYWORDS
+    search.add_argument("--keyword", action="append", choices=KEYWORDS, help="已验证 source label，可重复；不是任意关键词搜索")
+    search.add_argument("--probe", action="store_true", help="CDP 只读结构检查：0 模型调用、无数据库/报告；每来源仅第一页，最多 5 个详情")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())
     daily = sub.add_parser("daily", help="Run four incremental scans and one daily report")
@@ -118,14 +144,16 @@ def main(
     if args.command == "evaluate" and args.eligible_only and not args.platform:
         parser.error("--eligible-only requires --platform")
     if args.command == "search":
-        from scout_agent.search import GreenSearchAdapter, GreenSearchDOMPending, search_command
-        # Fail before .env loading, CDP attachment or database/report writes.
+        from scout_agent.green_discovery import probe_command, GreenSearchDOMPending
         try:
-            GreenSearchAdapter().ensure_verified()
-        except GreenSearchDOMPending as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        return search_command(args, load_settings())
+            if args.probe:
+                return probe_command(args, load_settings())
+            from scout_agent.search import search_command
+            return search_command(args, load_settings())
+        except (ValueError, GreenSearchDOMPending, PlaywrightError, CDPConnectionError):
+            print("Green 搜索安全停止：请检查 CDP、来源页面与 h1 / 仕事内容；DOM 变化需更新解析器。", file=sys.stderr)
+            return 1
+    _load_runtime()
     settings = load_settings()
 
     if args.command == "web":
