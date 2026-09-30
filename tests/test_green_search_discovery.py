@@ -455,3 +455,31 @@ def test_probe_empty_source_continues_with_total_budget(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert 'source=AWS cards=0' in output and 'source=SRE' in output
     assert len([url for action, url in page.events if action == 'goto' and '/company/' in url]) == 5
+
+
+@pytest.mark.parametrize('reason,expected', [('SOURCE_URL_MISMATCH', 'SOURCE_URL_MISMATCH'),
+                                           ('PRIVATE JD token=secret', 'UNKNOWN')])
+def test_search_safety_stop_last_progress_context(tmp_path, monkeypatch, capsys, reason, expected):
+    from scout_agent.search import search_command
+    page = Page(counts=['0求人'])
+    attach(monkeypatch, page)
+    a = adapter(page)
+    def fail(source, number):
+        if source == 'インフラエンジニア':
+            raise GreenSearchDOMPending('SOURCE_URL', reason)
+        return []
+    a.search_cards = fail
+    args = SimpleNamespace(keyword=['AWS', 'インフラエンジニア'], max_jobs=30,
+                           max_model_jobs=20, pages_per_keyword=1)
+    s = settings()
+    s.db_path = tmp_path / 'fictional.db'
+    s.codex_model, s.codex_batch_size = 'fictional', 2
+    monkeypatch.setattr('scout_agent.search.SearchCodex', lambda *args: object())
+    monkeypatch.setattr('scout_agent.search.generate_search_report',
+                        lambda *args: pytest.fail('must not report a failed run'))
+    assert search_command(args, s, adapter=a) == 1
+    output = capsys.readouterr()
+    assert output.out.splitlines()[-1] == 'Search progress: インフラエンジニア page 1'
+    assert output.err.strip() == f'Green safety stop: source=インフラエンジニア page=1 category={expected}'
+    assert 'PRIVATE' not in output.out + output.err and 'secret' not in output.err
+    assert page.closed

@@ -63,7 +63,7 @@ def job_detail(request: Request, scout_id: int) -> HTMLResponse:
 
 @router.get("/search", response_class=HTMLResponse)
 def search_pool(request: Request) -> HTMLResponse:
-    from scout_agent.search import SearchStore, render_search
+    from scout_agent.search import SearchStore
     from scout_agent.storage.db import Database
     # Do not migrate from a GET route; old databases simply have no search pool.
     if not request.app.state.db_path.exists():
@@ -73,4 +73,33 @@ def search_pool(request: Request) -> HTMLResponse:
             exists = db.conn.execute("SELECT 1 FROM sqlite_master WHERE name='search_jobs'").fetchone()
             store = SearchStore(db, migrate=False)
             results = store.current_results() if exists else []
-    return HTMLResponse(render_search(results), headers=PRIVATE_HEADERS)
+    from .viewmodels import search_cards
+    from .search_runs import KEYWORDS, LIMITS
+    return templates.TemplateResponse(request=request, name="search.html", context={
+        "cards": search_cards(results), "sources": KEYWORDS, "limits": LIMITS,
+        "csrf_token": request.app.state.search_runs.csrf_token,
+    }, headers=PRIVATE_HEADERS)
+
+
+@router.post("/search/run")
+async def start_search(request: Request):
+    import secrets
+    manager = request.app.state.search_runs
+    token = request.headers.get("x-csrf-token", "")
+    if not secrets.compare_digest(token.encode(), manager.csrf_token.encode()):
+        raise HTTPException(403, "CSRF 校验失败")
+    try:
+        data = await request.json()
+        started = manager.start(data)
+    except ValueError as exc:
+        raise HTTPException(422, "搜索参数无效，请检查 source 和整数范围") from exc
+    if not started:
+        raise HTTPException(409, "正在搜索，请等待本轮完成")
+    from fastapi.responses import JSONResponse
+    return JSONResponse(manager.snapshot(), status_code=202, headers=PRIVATE_HEADERS)
+
+
+@router.get("/search/run/status")
+def search_status(request: Request):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(request.app.state.search_runs.snapshot(), headers=PRIVATE_HEADERS)

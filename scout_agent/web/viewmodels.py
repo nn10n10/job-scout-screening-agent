@@ -184,3 +184,18 @@ def evaluation_detail(result: StoredEvaluation) -> EvaluationDetail:
         evaluated_at=result.evaluated_at.isoformat(sep=" ", timespec="seconds"),
         detail_url=_safe_detail_url(result.url),
     )
+
+
+def search_cards(results):
+    from scout_agent.green_discovery import Job
+    cards = []
+    for job, result in results:
+        try:
+            url = Job.from_url(job.url, {}).url
+        except (ValueError, TypeError):
+            url = None
+        cards.append(dict(verdict=result.verdict, company=job.fields.get('company'),
+                          title=job.fields.get('title'), salary=job.fields.get('salary'),
+                          location=job.fields.get('location'), sources=job.matched_keywords,
+                          summary=result.summary, concerns=result.concerns, url=url))
+    return sorted(cards, key=lambda card: {'TARGET': 0, 'POSSIBLE': 1, 'DROP': 2}[card['verdict']])

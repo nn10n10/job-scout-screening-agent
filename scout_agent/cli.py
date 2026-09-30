@@ -139,7 +139,7 @@ def main(
     reprocess.add_argument("--dry-run", action="store_true", help="Show decisions without writing")
     sub.add_parser("report", help="Regenerate report for latest completed scan")
     sub.add_parser("status", help="Show local setup and database status")
-    sub.add_parser("web", help="Serve the local read-only WebUI on 127.0.0.1:8765")
+    sub.add_parser("web", help="本地 WebUI（127.0.0.1:8765），支持只读增量搜索")
     args = parser.parse_args(argv)
     if args.command == "evaluate" and args.force and args.replace_provider:
         parser.error("--force and --replace-provider cannot be combined")
@@ -152,7 +152,10 @@ def main(
                 return probe_command(args, load_settings())
             from scout_agent.search import search_command
             return search_command(args, load_settings())
-        except (ValueError, GreenSearchDOMPending, PlaywrightError, CDPConnectionError):
+        except CDPConnectionError:
+            print("Codex category: browser_unavailable", file=sys.stderr)
+            return 1
+        except (ValueError, GreenSearchDOMPending, PlaywrightError):
             print("Green 搜索安全停止：请检查 CDP、来源页面与 h1 / 仕事内容；DOM 变化需更新解析器。", file=sys.stderr)
             return 1
     _load_runtime()
