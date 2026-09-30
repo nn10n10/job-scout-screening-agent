@@ -211,3 +211,31 @@ python -m scout_agent web
 ```bash
 python -m pytest
 ```
+
+## GitHub supervisor 开发桥（V0.1）
+
+`tools/agent_bridge.py` 是独立的开发编排器，不改变 Scout/classifier 行为，也不访问招聘网站。使用已安装并登录的本机 `gh` 与 Codex CLI；无需新增 PAT 或凭据文件。先确认 `gh auth status`、`codex login status`，并按上文安装 `.venv` 开发依赖。
+
+```bash
+python tools/agent_bridge.py --help
+python tools/agent_bridge.py --issue 1 --inspect
+python tools/agent_bridge.py --issue 1
+```
+
+`--inspect` 只读取 origin 对应仓库、issue/关联 PR 的评论及 marker ID，不调用 Codex、不写 state、不发评论。正常运行轮询间隔为 30 秒；可用 `--poll-seconds 15` 调整，`--once` 处理一个轮询批次后退出（它会执行任务，并非 dry-run）。`--python /path/to/python` 指定验证解释器，默认复用主 checkout 的 `.venv/bin/python`；`--timeout 1800` 设置 Codex/pytest 的超时秒数。
+
+仅接受仓库 owner `nn10n10` 的评论，marker 必须位于正文开头：
+
+- 控制 issue 中的 `[SUPERVISOR][TASK]` 启动/继续当前任务。
+- issue 或关联 PR 顶层 conversation 中的 `[SUPERVISOR][REVIEW]` 在同一任务分支/worktree 上迭代；需要已有关联 PR。
+- `[SUPERVISOR][APPROVED]` 标记完成并退出；需要已有关联 PR。**不会自动 merge**。
+
+桥从最新 `origin/main` 创建 `agent/issue-<N>`，在系统临时目录的 `scout-bridge-issue-<N>-*/repo` 中运行 `codex exec`；已有本地/远程分支与 open PR 会复用。若该分支已在其他 checkout 中使用，或对应 PR 已 closed/merged，会停止并提示，不抢占 checkout 或创建重复 PR。GitHub 评论始终作为 stdin prompt 数据传入，不直接作为 shell 命令执行。
+
+开发 Codex 使用 `workspace-write`、`approval_policy="never"`，禁用额外 writable roots、全局 `/tmp`/`TMPDIR` 写权限、网络/Web Search/app 工具以及用户配置/rules。运行所需临时文件限制在任务 worktree 中，Git 元数据由 sandbox 保护。参见 [OpenAI sandbox 说明](https://learn.chatgpt.com/docs/agent-approvals-security)和[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。安装的 CLI 必须支持这些选项；失败时不会降级到更宽权限。分类器 Codex 仍为原来的只读隔离运行。
+
+Codex 自行验证后，桥独立运行 `<主 checkout>/.venv/bin/python -m pytest`、`git diff --check` 和 staged diff 检查，cwd/PYTHONPATH 均指向 worktree。全部通过且有变更才 commit/push，并创建 main 为 base 的 PR，将链接与准确命令、退出码、pytest summary 发回 issue。控制 issue 不使用自动关闭关键词。Codex stdout/stderr 与退出码会捕获，原始模型输出不打印/持久化；失败验证的有界诊断仅经脱敏后输出到本机终端，issue 只收到命令/退出码/summary。敏感或生成文件不允许进入桥创建的 commit。
+
+主 checkout 的 gitignored `.bridge-state/` 仅存 comment ID、worktree 路径、PR 信息和状态等元数据，不存指令正文/模型日志/测试日志。仓库共享的文件锁保证一次只有一个桥运行，覆盖所有 issue 与 linked worktree。comment ID 在调用 Codex **之前**原子写入；重启不会重复执行。若 Codex/测试失败，或 Ctrl-C 中断任务，桥等待新的 owner marker 评论；同一评论不会重试。GitHub 通知失败会保留状态并在下一次轮询重试；在远端已发出评论而本地未收到响应的极端情况下，状态通知可能重复，但 Codex 不会重复运行。`--once` 失败返回 1，Ctrl-C 返回 130。
+
+worktree 会保留供 review/失败排查。APPROVED 后可从主 checkout 用 `git worktree remove <记录的 worktree 路径>` 清理，并保留 `.bridge-state/` 的已处理 ID。不要删除 state 后重启同一控制 issue，否则旧 TASK 会再次成为待处理指令。未执行真实付费 Codex 的自动集成测试；单元测试中的 `gh`、`git`、`codex` 均为 mocks。
