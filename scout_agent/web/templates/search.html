@@ -17,9 +17,12 @@
 {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Green 原始职位 ↗</a>{% endif %}</article>
 {% if card.verdict == 'DROP' %}</details>{% endif %}{% else %}<p>当前暂无候选结果。</p>{% endfor %}</section>
 </main>
+<script src="{{ url_for('static', path='/search_config.js') }}"></script>
 <script>
 const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');
+const configLimits = {{ limits|tojson }};
+SearchConfig.restore(form, configLimits);
 let previous = null;
 async function poll() {
   try {
@@ -38,7 +41,9 @@ async function poll() {
   setTimeout(poll, 1500);
 }
 form.addEventListener('submit', async event => {
-  event.preventDefault(); button.disabled = true;
+  event.preventDefault();
+  if (!SearchConfig.save(form, configLimits)) { document.getElementById('error').textContent = '请选择 source 并检查整数范围。'; return; }
+  button.disabled = true;
   const data = {sources: [...form.querySelectorAll('[name=sources]:checked')].map(input => input.value)};
   for (const input of form.querySelectorAll('[type=number]')) data[input.name] = Number(input.value);
   try {

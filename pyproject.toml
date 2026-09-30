@@ -24,7 +24,7 @@ dev = ["pytest>=8,<10", "httpx>=0.27,<1"]
 include = ["scout_agent*"]
 
 [tool.setuptools.package-data]
-"scout_agent" = ["report/templates/*.j2", "prompts/*.txt", "web/templates/*.html", "web/static/*.css"]
+"scout_agent" = ["report/templates/*.j2", "prompts/*.txt", "web/templates/*.html", "web/static/*.css", "web/static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
