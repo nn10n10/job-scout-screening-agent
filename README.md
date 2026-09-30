@@ -243,57 +243,54 @@ Codex 自行验证后，桥独立运行 `<主 checkout>/.venv/bin/python -m pyte
 worktree 会保留供 review/失败排查。APPROVED 后可从主 checkout 用 `git worktree remove <记录的 worktree 路径>` 清理，并保留 `.bridge-state/` 的已处理 ID。不要删除 state 后重启同一控制 issue，否则旧 TASK 会再次成为待处理指令。未执行真实付费 Codex 的自动集成测试；单元测试中的 `gh`、`git`、`codex` 均为 mocks。
 
 
-本机 CLI 兼容性证据（2026-09-30）：实际执行 `codex exec --help`，退出码 0；help 列出当前调用使用的 `--sandbox`（支持 `workspace-write`）、`--ephemeral`、`--ignore-user-config`、`--ignore-rules`、`--color`、`--config`、`-C` 及 stdin `-`。本环境提示无法创建 PATH aliases（Read-only file system），但 help 正常返回。此检查未调用模型。help 仅确认 flags 与 TOML override 语法，不能证明 `approval_policy`、`allow_login_shell`、`web_search`、`sandbox_workspace_write.*`、`apps._default.enabled`、`agents.enabled` 的运行时效果；这些 config 与实际隔离效果仍待首次授权的真实 bridge run 验证，测试不会为此调用付费模型。发布成功后 state 保存 `verified_published_sha`，旧 state 无此字段时不能直接 APPROVED，需先 REVIEW。
+### Green Search V0.1（TASK-002）
 
+```bash
+python -m scout_agent search green --max-jobs 30 --max-model-jobs 20
+python -m scout_agent search --help
+```
 
-本次 publish 修复 REVIEW 的本地验收证据（供外层 bridge 更新 PR #2）：
+主动搜索候选池与 Scout 筛选分开：Search 使用 `source_kind=search` 的独立
+`search_jobs` / `search_evaluations` SQLite 表，不更新已有 Scout 或 Codex Evaluation。
+默认关键词：AWS、クラウドエンジニア、SRE、DevOps、Platform Engineer、インフラエンジニア。
+可重复传入 `--keyword`；`--pages-per-keyword` 默认 2。最多读取 30 个独立职位详情，
+最多送 20 个职位给 Codex，复用 `CODEX_BATCH_SIZE`（默认 8），固定 low reasoning。
+TARGET + POSSIBLE 达到 15 时可提前停止（批次边界可能略超出阈值）。
 
-- 精确复现：`git diff --cached --check` 退出码 2，指出 `pytest-of-zmang/pytest-0/` 下虚构 HTML 报告的 trailing whitespace。`git diff --cached --name-only -z` 退出码 0。根因是旧版本把 worktree 根目录当作 TMPDIR，发布的 `git add --all` 将测试报告、pytest 链接和 Codex sandbox 临时产物一并暂存；不是 git flag 不兼容。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest tests/test_agent_bridge.py -q`：退出码 0，`75 passed in 0.39s`。相关测试文件 `tests/test_agent_bridge.py`；新增覆盖旧误暂存产物恢复、已 tracked 产物拒绝发布、publish staged check 失败、本地诊断脱敏及限长、临时目录外部链接拒绝。原有中文输出、APPROVED 绑定 verified SHA、review 分支/PR 复用和不 merge 测试保留。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest`：收集 401 项，在 `tests/test_web.py` 首项阻塞，Ctrl-C 中断，退出码 130，无最终 summary。最终代码再次执行 `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 timeout --signal=INT --kill-after=3 20 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest`：收集 402 项，同处阻塞，退出码 137，无最终 summary；不能报告完整套件通过。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 timeout --signal=INT --kill-after=3 20 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest tests/test_web.py::test_web_empty_state_does_not_create_database -vv -o faulthandler_timeout=5`：退出码 137，无最终 summary；5 秒堆栈显示主线程等待 AnyIO portal，后台线程等待 asyncio selector。最小本地 asyncio 线程唤醒实验显示回调仍在 ready 队列，内部 socket 的 send 返回 `PermissionError: [Errno 1] Operation not permitted`；沙箱禁止该 IPC 写操作。未更改 WebUI、测试或安全权限以绕过限制。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest --ignore=tests/test_web.py`：退出码 0，`385 passed in 4.57s`；排除 17 项 WebUI 测试，仅作诊断，不替代完整验收。
-- `git diff --check`：退出码 0，无输出。旧暂存区中的生成文件未由开发 Codex取消暂存（禁止修改 Git 元数据），`git diff --cached --check` 的原始失败仍保留给外层 bridge；更新后的 bridge 会在验证前按限定路径恢复暂存区，而不丢弃文件或源码修改。
-- `/home/zmang/scoutfilter/scout-agent/.venv/bin/python tools/agent_bridge.py --help`：退出码 0，输出“由仓库 owner 控制的 GitHub/Codex 本地开发桥；不访问招聘网站。”和中文选项说明。
-- `codex exec --help`：退出码 0，实际 help 确认当前 flags，提示无法创建 PATH aliases（Read-only file system），详见上文。未调用模型；config 的运行时隔离效果仍待授权验证。
-- warning/skip/failure：通过的两组测试均无；完整套件及单项 WebUI 无最终 summary，存在上述阻塞。未访问真实浏览器、真实数据库、招聘网站、网络或付费模型；gh/git/codex 测试调用均为 mocks。subagent 未运行（当前环境无该工具）。
+漏斗顺序为列表本地排除 → 结构化 JD → 内容/策略缓存 → 详情 hard rule → Codex batch。
+缓存命中无需重复本地或模型判断；首次运行详情 hard rule 仍在模型之前执行。
+明显无关标题、明确年收上限低于 450 万、明确以 SES/客先常驻为主、纯 Helpdesk/监控
+或明确纯应用开发可零 token 排除。模糊 Infra/IT/社内SE 保守进入详情；
+Kubernetes/EKS 或 ArgoCD/Istio/observability 缺口不单独导致 DROP。
+Remote 等未提供字段显示 UNKNOWN。无法确定的职责/条件保留 POSSIBLE；
+TARGET 必须有主要基础设施职责证据。模型预算耗尽的职位保持待处理，不伪造评价。
 
-下一步由外层 bridge 加载更新后的实现，在现有 worktree 恢复误暂存产物并独立执行完整验证；仅全部通过后提交、推送到同一 `agent/issue-1` / PR #2。此开发任务未 commit、push、修改 Git 元数据、发送 GitHub 消息或 merge。完整套件的沙箱 IPC 阻塞和 config 运行时验证仍未闭环。
+紧凑 JD 仅包含公司、职位、年收、地点/Remote、主职责、必須、歓迎、技术；
+模型不接收整页 HTML、导航/footer 或重复字段行。全局按公司 ID + job ID 去重，
+合并实际遇到的 matched keywords。按 stable job ID + content_hash + policy_version
+永久保留历史缓存，仅 JD 内容或策略版本改变时重新评价。
+报告与 Web UI `/search` 默认展示 TARGET + POSSIBLE，DROP 仅计数。
+最终统计包括原始卡片、独立职位、本地排除、缓存、送模型职位、批次及各分类数量。
 
-本轮补充验证（保留上轮全部修改）：
+**当前生产安全门仍关闭**：仓库只确认 `/search`、`?page=N`、职位 URL 形态，
+以及 Green Scout 中已观察到的职位详情 `仕事内容` / `h1` DOM。
+关键词查询方法、搜索列表卡片字段尚无真实 DOM 证据。命令当前返回退出码 2，
+在读取 `.env`、连接 CDP、创建数据库、模型调用和生成报告之前安全失败。
+未实现猜测性的搜索参数或 click selector；自动测试的 fake Green 不代表真实站点验证。
+最小剩余步骤：在用户已登录 Chrome 中只读检查 `/search` 的关键词查询方式，
+确认职位链接及标题/公司/年收/地点字段的 DOM，去标识化记录后补充只读
+`search_cards(keyword, page)` locator/parser 并开启 `ensure_verified()` 安全门。
+详情解析独立函数也需首次真实只读确认其字段完整性；解析不了主职责必须停止。
+只允许 CDP，不自动 fallback 到 persistent Chromium。禁止応募、気になる、面谈、收藏、
+消息、账号设置、上传或自动応募。此版本不支持其他平台主动搜索。
 
-- 新增 `test_pytest_generated_files_are_ignored_while_source_is_committed`：mock pytest 在真实 TMPDIR 中写入虚构 HTML，依据仓库 ignore 规则模拟 staging，确认只提交源码，且 staging 后、commit 前仍执行 `git diff --cached --check`。新增 `test_force_staged_runtime_output_is_rejected_before_commit`：模拟强行暂存 runtime 文件，确认拒绝 commit/push。所有 gh/git/codex subprocess 均 mock；这不是实际 Git staging 集成验证。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest tests/test_agent_bridge.py -q`：exit 0，`77 passed in 0.41s`。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 timeout --signal=INT --kill-after=3 20 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest`：收集 404 项，在 `tests/test_web.py` 阻塞；exit 137，无最终 pytest summary。
-- `TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest --ignore=tests/test_web.py`：exit 0，`387 passed in 4.83s`。仅作诊断，不代替完整套件。
-- `git diff --check`：exit 0，无输出；`git diff --cached --check`：exit 2，旧 `pytest-of-zmang/pytest-0/` HTML 的 trailing whitespace 仍在暂存区。开发 Agent 未修改 index；外层 bridge 必须先执行限定路径的恢复逻辑再验证。
-- `/home/zmang/scoutfilter/scout-agent/.venv/bin/python tools/agent_bridge.py --help`：exit 0，输出中文桥说明及参数帮助。`codex exec --help`：exit 0，再次确认上述 flags；唯一 warning 是 PATH aliases 无法创建（Read-only file system），未调用模型。
-- 通过的测试无 warning/skip/failure；完整套件超时，暂存区检查失败。真实浏览器、真实数据库、招聘网站、网络、付费模型访问：none；subagent：not run（当前工具不可用，按任务要求自行验证）。仍未 commit/push/merge；需外层 bridge 完成独立验证后发布同一分支/PR。
+虚构 50 卡片回归样例：25 个列表排除、10 个详情排除、15 个进入 Codex，
+批次为 8 + 7；重复运行 25 个详情缓存命中、0 个送模型、0 次模型批次。
+这些是 fictional mocks 的结果，不是 live Green 验证或模型 quota 使用记录。
 
-
-本轮修复：验证前与 publish 入口均先恢复新增的历史临时暂存文件并验证暂存路径；git add 后再次验证，最后执行 git diff --cached --check。无法安全恢复的已 tracked 产物在 whitespace 检查前拒绝，并在本地输出脱敏路径。新增回归测试覆盖 .bridge-tmp 历史 staging、直接 publish 恢复、已 tracked 临时文件提前拒绝。不会关闭 whitespace 检查或自动 merge。
-
-本轮验证（开发 sandbox 内自行执行；subagent 工具不可用）：
-
-- 测试命令共同前缀：`TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1`；解释器 ` /home/zmang/scoutfilter/scout-agent/.venv/bin/python`。
-- `-m pytest tests/test_agent_bridge.py -q`：exit 0，`80 passed in 0.39s`，无 warning/skip；相关新增测试为 `test_historical_tracked_artifact_rejected_before_whitespace_check`、`test_publish_directly_recovers_historical_staged_artifacts`，并扩展旧 staged 产物恢复测试。gh/git/codex 均 mock。
-- `-m pytest -q`：TestClient 阻塞后中断，exit 130，无最终 pytest 摘要。再次 `timeout 40s <解释器> -m pytest -q -o faulthandler_timeout=15`：exit 124，无最终摘要；堆栈定位 `tests/test_web.py:63` 的 `test_web_empty_state_does_not_create_database`，Starlette TestClient / AnyIO portal 等待。
-- `-m pytest -q --ignore=tests/test_web.py`：exit 0，`390 passed in 4.31s`，无 warning/skip。此结果不替代全套验收。
-- `git diff --check`：exit 0，无输出。`git diff --cached --check`：exit 2，旧 `pytest-of-zmang/pytest-0/` HTML trailing whitespace；本次明确禁止修改 git metadata，故未清理 index。
-- `<解释器> tools/agent_bridge.py --help`：exit 0，输出“由仓库 owner 控制的 GitHub/Codex 本地开发桥；不访问招聘网站。”，列出 issue/python/once/inspect 参数。
-- 真实 `codex exec --help`：exit 0，支持 `--sandbox workspace-write`、`--config`、`-C`、stdin `-`、`--ephemeral`、`--ignore-user-config`、`--ignore-rules`；警告 PATH aliases 因 read-only filesystem 无法创建。未运行真实 codex exec 任务。
-- 真实浏览器、真实数据库、招聘网站、网络、付费模型访问：none；未 commit/push/merge 或发送 GitHub 消息。外层 bridge 须先加载当前修复、恢复历史 staging，再完成全套与 cached whitespace 检查，全部通过后发布 PR #2。
-
-
-最新 REVIEW 验证（2026-09-30，保留既有源码/index 修改）：
-
-- 已删除 worktree 根目录残留 `pytest-of-zmang/`、`codex-bwrap-synthetic-mount-targets-1000/`；`.bridge-tmp/` 不存在。未修改 index 或其他 Git 元数据；index 中旧新增产物仍需外层 bridge 的限定恢复逻辑处理。
-- 发布防护补充检查所有路径层级的 pytest/bridge 临时目录与 Python 缓存，并拒绝 `.venv`。相关回归：`tests/test_agent_bridge.py::test_force_staged_runtime_output_is_rejected_before_commit`（四种路径）与 `test_sensitive_or_external_files_cannot_be_published`。
-- 测试共同环境前缀：`TMPDIR="$PWD/.bridge-state/verification" PYTHONDONTWRITEBYTECODE=1`。`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest tests/test_agent_bridge.py -q`：exit 0，`84 passed in 0.40s`，无 warning/skip/failure。
-- 同环境 `timeout --signal=INT --kill-after=3 20 /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest -o faulthandler_timeout=5`：exit 137，collected 411 items，无最终 summary；阻塞在 `tests/test_web.py` 首项 TestClient，5 秒诊断显示主线程等待 AnyIO portal，后台线程等待 asyncio selector。
-- 同环境 `/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest --ignore=tests/test_web.py -q`：exit 0，`394 passed in 4.61s`，无 warning/skip/failure；仅诊断，不替代完整验收。
-- `git diff --check`：exit 0，无输出。`git diff --cached --check`：exit 2，index 中历史 `pytest-of-zmang/pytest-0/` HTML trailing whitespace；删除磁盘文件不改变 index。
-- `/home/zmang/scoutfilter/scout-agent/.venv/bin/python tools/agent_bridge.py --help`：exit 0，关键输出“由仓库 owner 控制的 GitHub/Codex 本地开发桥；不访问招聘网站。”，中文参数说明。
-- `codex exec --help`：exit 0，再次确认当前 invocation 所用 flags，唯一 warning 为 PATH aliases 创建失败（Read-only file system）；无模型调用，运行时隔离尚未在真实任务中验证。
-- subagent：not run（工具不可用，按任务要求自行验证）。真实浏览器、真实数据库、招聘网站、网络、付费模型访问：none。gh/git/codex 单测调用均 mock。
-- 未 commit/push/merge、变更分支或发送 GitHub 消息。下一步外层 bridge 恢复历史新增临时文件 staging，并在支持 TestClient 的环境独立验证；全部通过后更新现有 agent/issue-1 / PR #2。
+Search 结果保存 provider、model_name 与 evaluated_at（UTC）；本地规则标记为
+`local` / `local-rule`。旧缓存的未知模型和判断时间保留为空，不编造历史元数据。
+可确认的年收范围、固定年收与上限以 JPY 保存 salary_min / salary_max；
+月给、时给及不确定文本保持 UNKNOWN，报告保留原始薪资。
+模型配额、认证、超时或格式错误返回非零退出码，并保留已成功结果；
+失败批次不保存评价，剩余候选可下次续跑。

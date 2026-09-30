@@ -88,6 +88,12 @@ def main(
     parser = argparse.ArgumentParser(description="READ-ONLY local Job Scout screening agent")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("browser", help="Inspect existing Chrome tabs (CDP) or open legacy persistent Chromium")
+    search = sub.add_parser("search", help="Green 主动搜索候选池（只读，TARGET + POSSIBLE）")
+    search.add_argument("platform", choices=["green"], nargs="?", default="green", help="仅支持 Green")
+    search.add_argument("--max-jobs", type=_positive_int, default=30, help="独立职位详情上限（默认 30）")
+    search.add_argument("--max-model-jobs", type=_positive_int, default=20, help="Codex 职位预算（默认 20）")
+    search.add_argument("--pages-per-keyword", type=_positive_int, default=2, help="每关键词页数上限（默认 2）")
+    search.add_argument("--keyword", action="append", help="搜索关键词，可重复；默认 AWS / クラウドエンジニア / SRE / DevOps / Platform Engineer / インフラエンジニア")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())
     daily = sub.add_parser("daily", help="Run four incremental scans and one daily report")
@@ -111,6 +117,15 @@ def main(
         parser.error("--force and --replace-provider cannot be combined")
     if args.command == "evaluate" and args.eligible_only and not args.platform:
         parser.error("--eligible-only requires --platform")
+    if args.command == "search":
+        from scout_agent.search import GreenSearchAdapter, GreenSearchDOMPending, search_command
+        # Fail before .env loading, CDP attachment or database/report writes.
+        try:
+            GreenSearchAdapter().ensure_verified()
+        except GreenSearchDOMPending as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return search_command(args, load_settings())
     settings = load_settings()
 
     if args.command == "web":

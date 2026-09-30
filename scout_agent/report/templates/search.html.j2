@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Green Search 候选池</title>
+<body><nav><a href="/">Scout 筛选</a> | <a href="/search">Search 候选池</a></nav>
+<h1>Green Search 候选池 · 来源：search（主动搜索）</h1>
+<p>默认展示 TARGET + POSSIBLE；DROP：{{ drop_count }}。未评价职位保留待处理，不伪造判断。</p>
+{% if stats %}<p>{{ stats }}</p>{% endif %}
+{% for job, result in results if result.verdict != 'DROP' %}
+<article><h2>{{ result.verdict }} · {{ job.fields.get('company', 'UNKNOWN') }} · {{ job.fields.get('title', 'UNKNOWN') }}</h2>
+<p>年收：{{ job.fields.get('salary', 'UNKNOWN') }}；地点：{{ job.fields.get('location', 'UNKNOWN') }}；Remote：{{ job.fields.get('remote', 'UNKNOWN') }}</p>
+<p>为什么值得投：{{ result.summary }}</p><ul>{% for reason in result.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+<p>主要风险 / 缺口：{{ result.concerns|join('；') or 'UNKNOWN' }}</p>
+<p>matched keyword：{{ job.matched_keywords|join('、') }}</p><a href="{{ job.url }}" rel="noreferrer noopener">Green 原始职位</a></article>
+{% endfor %}</body></html>
