@@ -311,5 +311,8 @@ Green probe 失败时只输出 source label、有限的 stage/reason code 和结
 `DETAIL_NAVIGATION` / `DETAIL_TITLE` / `DETAIL_RESPONSIBILITIES` 表示详情导航、标题或主职责解析失败。
 `PLAYWRIGHT_TIMEOUT` / `PLAYWRIGHT_ERROR` 表示对应阶段的浏览器读取失败。
 无结果的 source 会继续下一个来源，总详情预算仍不超过 5；布局安全异常立即非零退出。
-允许同来源路径的 canonical query 或末尾斜线，仍禁止跳转到其他路径或域名。
+导航目标始终由白名单 source route 生成。允许同来源路径的 canonical query 或末尾斜线，
+也允许已登录 Chrome 中观察到的同源 HTTPS `/search` 加非空 query 的 canonical redirect；
+不记录或输出 query 内容。第 2 页及以后必须确认最终 query 的 `page` 与请求页码一致，
+缺失或冲突时安全停止。仍拒绝跨域、HTTP、userinfo、空 query 的 `/search` 及其他路径。
 自动测试通过不代表 live verified；live probe 尚需用户本机执行。

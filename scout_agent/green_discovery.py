@@ -50,12 +50,29 @@ def safety_stage(stage):
         raise GreenSearchDOMPending(stage, reason) from None
 
 
-def valid_source_redirect(url, label):
+def valid_source_redirect(url, label, page=1):
     if not isinstance(url, str) or re.search(r'[\s\x00-\x1f\x7f]', url):
         return False
-    parts = urlsplit(url)
-    return (parts.scheme == 'https' and parts.netloc == 'www.green-japan.com'
-            and parts.path in (SOURCES[label], SOURCES[label] + '/'))
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    if (label not in SOURCES or page < 1 or parts.scheme != 'https'
+            or parts.netloc != 'www.green-japan.com'):
+        return False
+    if parts.path == '/search':
+        # Authenticated Green canonicalizes verified routes to opaque queries.
+        # Do not infer, retain or print the meaning of other query parameters.
+        if not parts.query:
+            return False
+    elif parts.path not in (SOURCES[label], SOURCES[label] + '/'):
+        return False
+    if page >= 2:
+        pages = [value for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                 if key == 'page']
+        if not pages or any(value != str(page) for value in pages):
+            return False
+    return True
 
 
 FIELDS = ('company', 'title', 'salary', 'location', 'remote', 'responsibilities', 'required', 'preferred', 'technology')
@@ -113,7 +130,7 @@ class GreenSearchAdapter:
         with safety_stage(Stage.SOURCE_NAVIGATION):
             self.page.goto(target, wait_until='domcontentloaded', timeout=15000)
         with safety_stage(Stage.SOURCE_URL):
-            if not valid_source_redirect(self.page.url, keyword):
+            if not valid_source_redirect(self.page.url, keyword, page):
                 raise GreenSearchDOMPending(Stage.SOURCE_URL, 'SOURCE_URL_MISMATCH')
         with safety_stage(Stage.JOB_LINKS):
             anchors = self.page.locator('a[href*="/company/"][href*="/job/"]:visible')

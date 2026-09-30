@@ -8,7 +8,7 @@ import pytest
 
 from scout_agent.green_discovery import (
     SOURCES, ORIGIN, Job, GreenSearchAdapter, GreenSearchDOMPending,
-    pagination_url, source_url, probe_command,
+    pagination_url, source_url, probe_command, valid_source_redirect,
 )
 
 
@@ -293,8 +293,59 @@ def test_enabled_adapter_keeps_cache_batch_and_budgets(tmp_path):
 @pytest.mark.parametrize('number', [1, 2])
 def test_source_canonical_redirect(suffix, number):
     page = Page(counts=['0求人'])
+    if number >= 2 and 'page=' not in suffix:
+        suffix += '&page=2'
     page.goto = lambda url, **kwargs: setattr(page, 'url', source_url('AWS') + suffix)
     assert adapter(page).search_cards('AWS', number) == []
+
+
+@pytest.mark.parametrize('path,number,accepted', [
+    ('/search?opaque=fictional', 1, True),
+    ('/search?opaque=fictional&page=2', 2, True),
+    ('/search?opaque=fictional', 2, False),
+    ('/search?opaque=fictional&page=1', 2, False),
+    ('/search?opaque=fictional&page=2&page=3', 2, False),
+    ('/search?opaque=fictional&page=', 2, False),
+    ('/search/skill/AWS?opaque=fictional', 2, False),
+    ('/search/skill/AWS?page=1', 2, False),
+    ('/search/skill/AWS?page=2&page=1', 2, False),
+    ('/search', 1, False), ('/search?', 1, False),
+    ('/search/?opaque=fictional', 1, False),
+    ('/login?opaque=fictional', 1, False),
+    ('/messages?opaque=fictional', 1, False),
+    ('/search/skill/SRE?opaque=fictional', 1, False),
+])
+def test_canonical_search_pagination_boundary(path, number, accepted):
+    assert valid_source_redirect(ORIGIN + path, 'AWS', number) is accepted
+    page = Page(counts=['0求人'])
+    def goto(target, **kwargs):
+        assert target == source_url('AWS', number)
+        page.url = ORIGIN + path
+    page.goto = goto
+    if accepted:
+        assert adapter(page).search_cards('AWS', number) == []
+    else:
+        with pytest.raises(GreenSearchDOMPending) as exc:
+            adapter(page).search_cards('AWS', number)
+        assert exc.value.stage.value == 'SOURCE_URL'
+        assert not page.events
+
+
+def test_probe_opaque_canonical_search_passes(monkeypatch, capsys):
+    page = Page([Node(['Fictional SRE'], '/company/900001/job/1')])
+    original = page.goto
+    def goto(target, **kwargs):
+        original(target, **kwargs)
+        if target == source_url('AWS'):
+            page.url = ORIGIN + '/search?opaque=PRIVATE_QUERY'
+    page.goto = goto
+    attach(monkeypatch, page)
+    assert probe_command(SimpleNamespace(keyword=['AWS'], max_jobs=2), settings()) == 0
+    output = capsys.readouterr()
+    assert 'valid_job_links=1' in output.out
+    assert 'SOURCE_URL' not in output.err
+    assert 'PRIVATE_QUERY' not in output.out + output.err
+    assert all(event[0] in ('goto', 'read') for event in page.events)
 
 
 @pytest.mark.parametrize('url', [
@@ -303,6 +354,10 @@ def test_source_canonical_redirect(suffix, number):
     'https://user@www.green-japan.com/search/skill/AWS',
     ORIGIN + '/login', ORIGIN + '/search/skill/SRE',
     ORIGIN + '/search/skill/AWS//', ORIGIN + '/search/skill/AWS%2f',
+    'http://www.green-japan.com/search?opaque=fictional',
+    'https://evil.test/search?opaque=fictional',
+    'https://user@www.green-japan.com/search?opaque=fictional',
+    ORIGIN + '/search', ORIGIN + '/search?', ORIGIN + '/messages?opaque=fictional',
 ])
 def test_probe_source_url_diagnostic(monkeypatch, capsys, url):
     page = Page()
