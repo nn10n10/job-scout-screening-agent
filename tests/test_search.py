@@ -199,16 +199,8 @@ def test_old_web_database_no_search_migration(tmp_path):
         assert not conn.execute("SELECT name FROM sqlite_master WHERE name='search_jobs'").fetchone()
 
 
-def test_safe_failure_no_browser_db_env_model(monkeypatch, capsys):
-    def forbidden(*args, **kwargs):
-        raise AssertionError('forbidden external action')
-    monkeypatch.setattr('scout_agent.cli.load_settings', forbidden)
-    monkeypatch.setattr('scout_agent.browser.manager.BrowserManager.open', forbidden)
-    monkeypatch.setattr('scout_agent.search.SearchCodex._run_codex', forbidden)
-    assert main(['search', 'green', '--max-jobs', '30']) == 2
-    assert 'DOM 尚未验证' in capsys.readouterr().err
-    with pytest.raises(GreenSearchDOMPending):
-        GreenSearchAdapter().ensure_verified()
+def test_static_gate_enabled_without_browser():
+    assert GreenSearchAdapter().ensure_verified() is None
 
 
 def test_details_navigation_read_only():

@@ -14,7 +14,7 @@ from .base import PlatformAdapter
 
 GREEN_ORIGIN = "https://www.green-japan.com"
 THREAD_PATH = re.compile(r"/messages/v2/(\d+)")
-JOB_PATH = re.compile(r"/company/\d+/job/\d+")
+JOB_PATH = re.compile(r"/company/[0-9]+/job/[0-9]+")
 RECEIVED_AT = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}$")
 SALARY = re.compile(r"\d+\s*万円")
 LOCATION = re.compile(r"都|道|府|県|全国|海外|リモート")

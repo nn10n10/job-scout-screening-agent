@@ -243,16 +243,20 @@ Codex 自行验证后，桥独立运行 `<主 checkout>/.venv/bin/python -m pyte
 worktree 会保留供 review/失败排查。APPROVED 后可从主 checkout 用 `git worktree remove <记录的 worktree 路径>` 清理，并保留 `.bridge-state/` 的已处理 ID。不要删除 state 后重启同一控制 issue，否则旧 TASK 会再次成为待处理指令。未执行真实付费 Codex 的自动集成测试；单元测试中的 `gh`、`git`、`codex` 均为 mocks。
 
 
-### Green Search V0.1（TASK-002）
+### Green Search V0.1（TASK-003）
 
 ```bash
+python -m scout_agent search green --probe --max-jobs 5
 python -m scout_agent search green --max-jobs 30 --max-model-jobs 20
 python -m scout_agent search --help
 ```
 
 主动搜索候选池与 Scout 筛选分开：Search 使用 `source_kind=search` 的独立
 `search_jobs` / `search_evaluations` SQLite 表，不更新已有 Scout 或 Codex Evaluation。
-默认关键词：AWS、クラウドエンジニア、SRE、DevOps、Platform Engineer、インフラエンジニア。
+默认来源：AWS、SRE、DevOps、Terraform、Kubernetes 的 `/search/skill/<label>`，
+以及 インフラエンジニア 的 `/jobtype-l/190150/01`。`--keyword` 仅接受这些 source labels，
+matched keyword 如实记录来源。クラウドエンジニア / Platform Engineer 是内容匹配目标，
+由上述来源覆盖，不表示精确关键词搜索。
 可重复传入 `--keyword`；`--pages-per-keyword` 默认 2。最多读取 30 个独立职位详情，
 最多送 20 个职位给 Codex，复用 `CODEX_BATCH_SIZE`（默认 8），固定 low reasoning。
 TARGET + POSSIBLE 达到 15 时可提前停止（批次边界可能略超出阈值）。
@@ -272,15 +276,19 @@ TARGET 必须有主要基础设施职责证据。模型预算耗尽的职位保�
 报告与 Web UI `/search` 默认展示 TARGET + POSSIBLE，DROP 仅计数。
 最终统计包括原始卡片、独立职位、本地排除、缓存、送模型职位、批次及各分类数量。
 
-**当前生产安全门仍关闭**：仓库只确认 `/search`、`?page=N`、职位 URL 形态，
-以及 Green Scout 中已观察到的职位详情 `仕事内容` / `h1` DOM。
-关键词查询方法、搜索列表卡片字段尚无真实 DOM 证据。命令当前返回退出码 2，
-在读取 `.env`、连接 CDP、创建数据库、模型调用和生成报告之前安全失败。
-未实现猜测性的搜索参数或 click selector；自动测试的 fake Green 不代表真实站点验证。
-最小剩余步骤：在用户已登录 Chrome 中只读检查 `/search` 的关键词查询方式，
-确认职位链接及标题/公司/年收/地点字段的 DOM，去标识化记录后补充只读
-`search_cards(keyword, page)` locator/parser 并开启 `ensure_verified()` 安全门。
-详情解析独立函数也需首次真实只读确认其字段完整性；解析不了主职责必须停止。
+**代码已启用，但自动测试不代表 live verified。首次使用前建议先运行 `--probe`。**
+probe 仅连接用户已有已登录 Chrome，每来源只检查第一页，默认/最多读取 5 个独立
+职位详情；不创建/迁移 SQLite、不生成报告、不加载模型 provider 或调用 classifier。
+只输出 source、卡片/合法链接数量、title/salary/location 和主职责可解析数量，
+不打印公司、正文、JD 或 URL。至少有合法链接且一个详情能解析 title + responsibilities
+才返回 0；否则非零退出，请检查 CDP/登录/source 页面或更新 DOM 解析器。
+开发与自动验收均只使用 fictional mocks，**live probe 尚需用户本机执行**。
+
+列表仅读取 visible job anchors，严格验证 same-origin HTTPS 职位路径；使用既有
+段落解析器，缺字段保持 UNKNOWN。分页第一页使用 base URL，后续使用 `?page=N`。
+无合法链接时只读取明确的结果数量文本：确认 0 件返回空；正数或未知布局安全失败。
+详情仅读取 h1 和已确认的 `仕事内容` 区域；缺标题或职责不会送模型。
+若 Green DOM 变化，runtime safety check 非零退出，不回退为全页抓取。
 只允许 CDP，不自动 fallback 到 persistent Chromium。禁止応募、気になる、面谈、收藏、
 消息、账号设置、上传或自动応募。此版本不支持其他平台主动搜索。
 
