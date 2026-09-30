@@ -17,6 +17,7 @@ def comment(identifier=10, kind="TASK", *, owner=ab.OWNER, source=1, body=None):
 
 class Transport:
     def __init__(self, root):
+        self.head = "a" * 40
         self.root = root
         self.calls = []
         self.comments = {1: [comment()]}
@@ -36,12 +37,17 @@ class Transport:
         self.change_branch = False
         self.produce_changes = True
         self.staged_files = ["fictional.py"]
+        self.staged_added_files = None
+        self.publish_diff_exit = 0
+        self.added = False
 
     def __call__(self, command, cwd, **kwargs):
         self.calls.append((command, cwd, kwargs))
         result = ab.Result(command, 0)
         if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
             result.stdout = str(cwd if self.registered else self.root)
+        elif command == ["git", "rev-parse", "HEAD"]:
+            result.stdout = self.head
         elif command[:3] == ["git", "rev-parse", "--git-common-dir"]:
             result.stdout = str(self.root / ".git")
         elif command[:3] == ["git", "remote", "get-url"]:
@@ -49,7 +55,7 @@ class Transport:
         elif command[:3] == ["gh", "repo", "view"]:
             result.stdout = json.dumps({"nameWithOwner": "nn10n10/fictional-repo"})
         elif command[:3] == ["gh", "pr", "list"]:
-            result.stdout = json.dumps(self.prs)
+            result.stdout = json.dumps([dict(pr, headRefOid=pr.get("headRefOid", self.head)) for pr in self.prs])
         elif command[:2] == ["gh", "api"]:
             number = int(command[-1].split("/issues/")[1].split("/")[0])
             result.stdout = "\n".join(json.dumps(page) for page in self.pages.get(number, [self.comments.get(number, [])]))
@@ -83,16 +89,20 @@ class Transport:
             result.stdout = "=== 1 failed, 4 passed in 0.03s ===" if result.returncode else "=== 5 passed in 0.03s ==="
         elif command[:2] == ["git", "diff"]:
             if "--name-only" in command:
-                result.stdout = "\0".join(self.staged_files) + "\0"
+                files = (self.staged_added_files if "--diff-filter=A" in command
+                         and self.staged_added_files is not None else self.staged_files)
+                result.stdout = "\0".join(files) + "\0"
             else:
-                result.returncode = self.diff_exit
+                result.returncode = self.publish_diff_exit if self.added else self.diff_exit
                 result.stderr = "fictional whitespace failure" if result.returncode else ""
+        elif command[:3] == ["git", "restore", "--staged"]:
+            self.staged_files.remove(command[-1].removeprefix(":(literal)"))
         elif command[:2] == ["git", "status"]:
             result.stdout = " M fictional.py" if self.changed else ""
         elif command[:2] == ["git", "branch"]:
             result.stdout = "main" if self.change_branch else "agent/issue-1"
         elif command[:2] == ["git", "add"]:
-            pass
+            self.added = True
         elif command[:2] == ["git", "commit"]:
             self.changed = False
             self.ahead += 1
@@ -181,7 +191,7 @@ def test_successful_pr_creation_and_independent_verification(setup):
     assert "--body-file" in pr_command and "Closes" not in pr_args["input"]
     assert "5 passed" in pr_args["input"]
     notification = transport.commands("gh", "issue", "comment")[0][2]["input"]
-    assert "PR #12" in notification and "exit 0" in notification
+    assert "PR #12" in notification and "退出码 0" in notification
     model_index = transport.calls.index(transport.commands("codex", "exec")[0])
     pytest_index = transport.calls.index(tests[0])
     commit_index = transport.calls.index(transport.commands("git", "commit")[0])
@@ -258,7 +268,7 @@ def test_codex_failure_waits_for_new_instruction(setup):
     assert not transport.commands(str(bridge.python))
     assert not transport.commands("git", "commit")
     assert not transport.commands("git", "push")
-    assert "Codex failed (exit 9)" in transport.commands("gh", "issue", "comment")[0][2]["input"]
+    assert "Codex 失败（退出码 9）" in transport.commands("gh", "issue", "comment")[0][2]["input"]
     bridge.poll()
     assert len(transport.commands("codex", "exec")) == 1
     transport.codex_exit = 0
@@ -277,9 +287,9 @@ def test_verification_failure_never_commits_or_pushes(setup, failure, capsys):
     assert not transport.commands("git", "commit")
     assert not transport.commands("git", "push")
     assert not transport.commands("gh", "pr", "create")
-    assert len(transport.commands("git", "diff")) == 2
+    assert len(transport.commands("git", "diff")) == 4
     notification = transport.commands("gh", "issue", "comment")[0][2]["input"]
-    assert "Independent verification failed" in notification
+    assert "独立验证失败" in notification
     output = capsys.readouterr().out
     if failure == "pytest_exit":
         assert "1 failed, 4 passed" in output and "1 failed, 4 passed" in notification
@@ -300,7 +310,7 @@ def test_interruption_claim_is_durable_and_never_reruns(setup, monkeypatch):
     bridge.poll()
     assert not transport.commands("codex")
     assert bridge.state.data["status"] == "failed"
-    assert "interrupted" in transport.commands("gh", "issue", "comment")[0][2]["input"]
+    assert "中断" in transport.commands("gh", "issue", "comment")[0][2]["input"]
 
 
 def test_notification_retry_does_not_repeat_model(setup):
@@ -342,7 +352,7 @@ def test_refuses_branch_checked_out_outside_bridge_temp_directory(setup, tmp_pat
 def test_closed_pr_prevents_duplicate_creation(setup, state):
     bridge, transport = setup
     transport.prs = [{"number": 12, "url": "fictional", "state": state}]
-    with pytest.raises(ab.BridgeError, match="closed or merged"):
+    with pytest.raises(ab.BridgeError, match="已关闭或已合并"):
         bridge.poll()
     assert not transport.commands("codex")
     assert not transport.commands("gh", "pr", "create")
@@ -366,7 +376,7 @@ def test_no_changes_does_not_create_commit_or_pr(setup):
     assert not transport.commands("git", "commit")
     assert not transport.commands("git", "push")
     assert not transport.commands("gh", "pr", "create")
-    assert "No changes" in transport.commands("gh", "issue", "comment")[0][2]["input"]
+    assert "无变更" in transport.commands("gh", "issue", "comment")[0][2]["input"]
 
 
 @pytest.mark.parametrize("failure", ["push_exit", "create_exit", "change_branch"])
@@ -375,7 +385,7 @@ def test_publish_failure_does_not_report_success(setup, failure):
     setattr(transport, failure, 1)
     bridge.poll()
     assert bridge.state.data["status"] == "failed"
-    assert "failed" in transport.commands("gh", "issue", "comment")[-1][2]["input"]
+    assert "失败" in transport.commands("gh", "issue", "comment")[-1][2]["input"]
     if failure == "change_branch":
         assert not transport.commands("git", "push")
 
@@ -406,8 +416,9 @@ def test_codex_environment_removes_credentials(setup, monkeypatch):
     bridge.poll()
     environment = transport.commands("codex")[0][2]["env"]
     assert "GEMINI_API_KEY" not in environment and "GH_TOKEN" not in environment
-    assert environment["TMPDIR"] == bridge.state.data["worktree"]
+    assert environment["TMPDIR"] == str(Path(bridge.state.data["worktree"]) / ".bridge-state/runtime")
     verification_environment = transport.commands(str(bridge.python))[0][2]["env"]
+    assert verification_environment["TMPDIR"] == environment["TMPDIR"]
     assert "GEMINI_API_KEY" not in verification_environment and "GH_TOKEN" not in verification_environment
 
 
@@ -428,7 +439,7 @@ def test_lock_prevents_concurrent_tasks_and_releases_after_interrupt(tmp_path):
     directory = tmp_path / ".bridge-state"
     with pytest.raises(KeyboardInterrupt):
         with ab.task_lock(directory):
-            with pytest.raises(ab.BridgeError, match="Another bridge"):
+            with pytest.raises(ab.BridgeError, match="已有 bridge"):
                 with ab.task_lock(directory):
                     pytest.fail("Lock must reject concurrent bridge")
             raise KeyboardInterrupt()
@@ -447,7 +458,7 @@ def test_cli_help_does_not_invoke_any_tools(monkeypatch, capsys):
 def test_cli_inspect_is_read_only(setup, capsys):
     bridge, transport = setup
     assert ab.main(["--issue", "1", "--inspect"]) == 0
-    assert "Owner instruction: comment 10 TASK" in capsys.readouterr().out
+    assert "owner 指令：评论 10 TASK" in capsys.readouterr().out
     assert not transport.commands("codex")
     assert not transport.commands("git", "fetch")
     assert not transport.commands("gh", "issue", "comment")
@@ -505,7 +516,7 @@ def test_transport_terminates_child_group_on_timeout_or_interrupt(tmp_path, monk
 @pytest.mark.parametrize("filename", [".env", ".env.production", "data/fictional.json", "output/report.html",
                                     "auth.json", "Cookies", "browser_profiles/profile", "fictional.db",
                                     "fictional.sqlite3", "fictional.pem", ".codex/config.toml",
-                                    "storage_state.json", "capture.har", "../outside.txt"])
+                                    "storage_state.json", "capture.har", ".venv/bin/python", "../outside.txt"])
 def test_sensitive_or_external_files_cannot_be_published(setup, filename):
     bridge, transport = setup
     transport.staged_files = [filename]
@@ -513,7 +524,7 @@ def test_sensitive_or_external_files_cannot_be_published(setup, filename):
     assert bridge.state.data["status"] == "failed"
     assert not transport.commands("git", "commit")
     assert not transport.commands("git", "push")
-    assert "Sensitive/generated/external file" in transport.commands("gh", "issue", "comment")[-1][2]["input"]
+    assert "敏感、生成或外部文件" in transport.commands("gh", "issue", "comment")[-1][2]["input"]
 
 
 def test_paginated_comments_work_with_older_gh_without_slurp(setup):
@@ -533,7 +544,7 @@ def test_persisted_pr_closure_blocks_review_before_model_or_push(setup, state):
     transport.prs[0]["state"] = state
     transport.comments[12] = [comment(11, "REVIEW", source=12)]
     bridge.state = ab.State(bridge.state.directory, 1)
-    with pytest.raises(ab.BridgeError, match="closed or merged"):
+    with pytest.raises(ab.BridgeError, match="已关闭或已合并"):
         bridge.poll()
     assert len(transport.commands("codex", "exec")) == 1
     assert len(transport.commands("git", "push")) == 1
@@ -546,3 +557,200 @@ def test_fork_pr_with_matching_branch_is_not_associated(setup):
     bridge.poll()
     assert transport.commands("gh", "pr", "create")
     assert bridge.state.data["pr"]["number"] == 12
+
+
+@pytest.mark.parametrize("recorded", [None, "b" * 40])
+def test_approval_requires_verified_published_head(setup, recorded):
+    bridge, transport = setup
+    bridge.poll()
+    bridge.state.data["verified_published_sha"] = recorded
+    bridge.state.save()
+    bridge.state = ab.State(bridge.state.directory, 1)
+    transport.comments[12] = [comment(11, "APPROVED", source=12)]
+    assert bridge.poll() is False
+    assert bridge.state.data["status"] == "failed"
+    assert "[SUPERVISOR][REVIEW]" in transport.commands("gh", "issue", "comment")[-1][2]["input"]
+    assert len(transport.commands("codex", "exec")) == 1
+    assert not any("merge" in call[0] for call in transport.calls)
+
+
+def test_approval_refreshes_head_after_poll_discovery(setup, monkeypatch):
+    bridge, transport = setup
+    bridge.poll()
+    assert bridge.state.data["verified_published_sha"] == transport.head
+    original = bridge.comments
+    def changed_head_comments():
+        comments = original()
+        transport.prs[0]["headRefOid"] = "b" * 40
+        return comments
+    monkeypatch.setattr(bridge, "comments", changed_head_comments)
+    transport.comments[12] = [comment(11, "APPROVED", source=12)]
+    assert bridge.poll() is False
+    assert bridge.state.data["status"] == "failed"
+    assert len(transport.commands("codex", "exec")) == 1
+
+
+def test_failed_push_does_not_record_verified_published_sha(setup):
+    bridge, transport = setup
+    transport.push_exit = 1
+    bridge.poll()
+    assert bridge.state.data["verified_published_sha"] is None
+
+
+def test_review_revalidates_changed_head_before_approval(setup):
+    bridge, transport = setup
+    bridge.poll()
+    transport.head = "b" * 40
+    transport.comments[12] = [comment(11, "APPROVED", source=12)]
+    assert bridge.poll() is False
+    transport.comments[12].append(comment(12, "REVIEW", source=12))
+    bridge.poll()
+    assert bridge.state.data["verified_published_sha"] == transport.head
+    transport.comments[12].append(comment(13, "APPROVED", source=12))
+    assert bridge.poll() is True
+    assert len(transport.commands("codex", "exec")) == 2
+
+
+def test_old_staged_runtime_artifacts_are_unstaged_without_discarding_source(setup):
+    bridge, transport = setup
+    artifacts = [".bridge-tmp/legacy/report.html", "pytest-of-fictional/pytest-0/report.html",
+                 "codex-bwrap-synthetic-mount-targets-1000/lock"]
+    transport.staged_files.extend(artifacts)
+    bridge.poll()
+    assert bridge.state.data["status"] == "review"
+    assert transport.staged_files == ["fictional.py"]
+    assert [call[0][-1] for call in transport.commands("git", "restore")] == [f":(literal){name}" for name in artifacts]
+    assert all(call[0][2:4] == ["--staged", "--"] for call in transport.commands("git", "restore"))
+    assert transport.commands("git", "diff", "--cached", "--check")
+    assert transport.commands("git", "commit")
+
+
+def test_publish_staged_check_failure_has_local_diagnostics_only(setup, capsys):
+    bridge, transport = setup
+    transport.publish_diff_exit = 2
+    bridge.poll()
+    assert bridge.state.data["status"] == "failed"
+    assert not transport.commands("git", "commit")
+    assert not transport.commands("git", "push")
+    assert "git diff --cached --check" in capsys.readouterr().out
+    notification = transport.commands("gh", "issue", "comment")[-1][2]["input"]
+    assert "git diff --cached --check" in notification
+    assert "退出码 2" in notification
+    assert "fictional whitespace failure" not in notification
+    assert "fictional whitespace failure" not in bridge.state.path.read_text()
+
+
+def test_local_diagnostics_redact_before_limiting_and_hide_arbitrary_argv(monkeypatch, capsys):
+    secret = "fictional-secret-" + "a" * 2000
+    monkeypatch.setenv("GH_TOKEN", secret)
+    result = ab.Result(["gh", "pr", "create", "--body", "private instruction"], 2,
+                       stdout="private stdout", stderr="token=" + secret + "\n" + "x" * 3000)
+    with pytest.raises(ab.BridgeError) as error:
+        ab.checked(result)
+    output = capsys.readouterr().out
+    assert "[REDACTED]" in output
+    assert secret not in output and "a" * 100 not in output
+    assert "private instruction" not in output
+    assert len(output) < 1600
+    assert "private stdout" not in str(error.value)
+
+
+def test_runtime_directory_refuses_external_symlink(setup, tmp_path):
+    bridge, _ = setup
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (bridge.root / ".bridge-state/runtime").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ab.BridgeError, match="worktree 之外"):
+        bridge.runtime_directory(bridge.root)
+
+
+def test_previously_tracked_runtime_artifact_is_rejected_not_unstaged(setup):
+    bridge, transport = setup
+    transport.staged_files = ["pytest-of-fictional/tracked.txt"]
+    transport.staged_added_files = []
+    bridge.poll()
+    assert bridge.state.data["status"] == "failed"
+    assert not transport.commands("git", "restore")
+    assert not transport.commands("git", "commit")
+    assert not transport.commands("git", "push")
+
+
+def test_pytest_generated_files_are_ignored_while_source_is_committed(setup, monkeypatch):
+    bridge, transport = setup
+    generated = []
+    committed = []
+    ignore_file = Path(ab.__file__).resolve().parent.parent / ".gitignore"
+    assert ".bridge-state/" in ignore_file.read_text().splitlines()
+
+    def with_generated_files(command, cwd, **kwargs):
+        result = transport(command, cwd, **kwargs)
+        if command[1:] == ["-m", "pytest"]:
+            directory = Path(kwargs["env"]["TMPDIR"]) / "pytest-of-fictional" / "pytest-0"
+            directory.mkdir(parents=True)
+            artifact = directory / "report.html"
+            artifact.write_text("<p>fictional test report</p>  \n")
+            generated.append(artifact)
+            (cwd / "fictional.py").write_text("value = 1\n")
+        elif command[:2] == ["git", "add"]:
+            # Model git add using the actual repository ignore rule; subprocesses stay mocked.
+            transport.staged_files = [
+                str(item.relative_to(cwd)) for item in cwd.rglob("*")
+                if item.is_file() and ".bridge-state" not in item.relative_to(cwd).parts
+            ]
+        elif command[:2] == ["git", "commit"]:
+            committed.extend(transport.staged_files)
+        return result
+
+    monkeypatch.setattr(ab, "run", with_generated_files)
+    bridge.poll()
+    assert bridge.state.data["status"] == "review"
+    assert generated and all(item.exists() for item in generated)
+    assert committed == ["fictional.py"]
+    commands = [call[0] for call in transport.calls]
+    add = commands.index(["git", "add", "--all"])
+    commit = next(i for i, command in enumerate(commands) if command[:2] == ["git", "commit"])
+    assert ["git", "diff", "--cached", "--check"] in commands[add + 1:commit]
+
+
+@pytest.mark.parametrize("filename", [".bridge-state/runtime/report.html",
+                                    "tests/pytest-of-fictional/report.html",
+                                    "tests/.pytest_cache/README.md", "tools/__pycache__/bridge.pyc"])
+def test_force_staged_runtime_output_is_rejected_before_commit(setup, monkeypatch, filename):
+    bridge, transport = setup
+
+    def force_stage(command, cwd, **kwargs):
+        result = transport(command, cwd, **kwargs)
+        if command[:2] == ["git", "add"]:
+            transport.staged_files.append(filename)
+        return result
+
+    monkeypatch.setattr(ab, "run", force_stage)
+    bridge.poll()
+    assert bridge.state.data["status"] == "failed"
+    assert not transport.commands("git", "commit")
+    assert not transport.commands("git", "push")
+
+
+@pytest.mark.parametrize("filename", [".bridge-tmp/tracked.txt", "pytest-of-fictional/tracked.txt"])
+def test_historical_tracked_artifact_rejected_before_whitespace_check(setup, capsys, filename):
+    bridge, transport = setup
+    transport.staged_files = ["fictional.py", filename]
+    transport.staged_added_files = ["fictional.py"]
+    bridge.poll()
+    assert bridge.state.data["status"] == "failed"
+    assert filename in capsys.readouterr().out
+    assert not transport.commands("git", "diff", "--cached", "--check")
+    assert not transport.commands("git", "commit")
+    assert not transport.commands("git", "push")
+
+
+def test_publish_directly_recovers_historical_staged_artifacts(setup):
+    bridge, transport = setup
+    transport.staged_files.append(".bridge-tmp/old/report.html")
+    transport.changed = True
+    bridge.publish(bridge.root, 1, "fictional verification")
+    assert transport.staged_files == ["fictional.py"]
+    commands = [call[0] for call in transport.calls]
+    restore = next(i for i, cmd in enumerate(commands) if cmd[:3] == ["git", "restore", "--staged"])
+    assert restore < commands.index(["git", "add", "--all"])
+    assert transport.commands("git", "commit")

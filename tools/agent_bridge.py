@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Owner-controlled GitHub/Codex development loop. No recruitment-site access."""
+"""由仓库 owner 控制的 GitHub/Codex 本地开发桥；不访问招聘网站。"""
 from __future__ import annotations
 
 import argparse
@@ -62,17 +62,39 @@ def run(command: list[str], cwd: Path, *, input: str | None = None,
                 process.communicate()
             if isinstance(exc, KeyboardInterrupt):
                 raise
-            return Result(command, 124, stderr="Command timed out; output withheld.")
+            return Result(command, 124, stderr="命令超时；原始输出已隐藏。")
         return Result(command, process.returncode, stdout, stderr)
     except OSError:
-        return Result(command, 127, stderr="Command could not be started.")
+        return Result(command, 127, stderr="无法启动命令。")
 
 
 def checked(result: Result) -> str:
     if result.returncode:
-        # gh/git may echo authenticated URLs or request payloads in errors.
-        raise BridgeError(f"{result.command[0]} {result.command[1]} failed (exit {result.returncode}); raw output withheld")
+        local_diagnostic(result)
+        # Only fixed diagnostic parameters travel to GitHub, never raw output/argv.
+        raise BridgeError(f"{command_label(result.command)} 失败（退出码 {result.returncode}）；诊断仅输出到本机")
     return result.stdout
+
+
+def command_label(command: list[str]) -> str:
+    label = " ".join(command[:2])
+    if command[:2] == ["git", "diff"]:
+        label += "".join(f" {arg}" for arg in command[2:] if arg in {
+            "--cached", "--check", "--name-only", "-z", "--diff-filter=A"})
+    return label
+
+
+def local_diagnostic(result: Result) -> None:
+    # Redact before truncation so truncation cannot split a secret before matching.
+    output = redact(result.stderr + "\n" + result.stdout)
+    output = "".join(char if char.isprintable() or char in "\n\t" else "?" for char in output)
+    print(f"本地诊断：{command_label(result.command)} | 退出码 {result.returncode}\n{output[:1500]}", flush=True)
+
+
+def runtime_artifact(filename: str) -> bool:
+    return any(part in {".bridge-state", ".bridge-tmp", ".pytest_cache", "__pycache__"}
+               or part.startswith(("pytest-of-", "codex-bwrap-synthetic-mount-targets-"))
+               for part in Path(filename).parts)
 
 
 def redact(text: str) -> str:
@@ -100,7 +122,7 @@ def comment_pages(output: str):
     while remaining:
         page, end = decoder.raw_decode(remaining)
         if not isinstance(page, list):
-            raise BridgeError("Unexpected comment API response; expected an array")
+            raise BridgeError("评论 API 响应异常；应为数组")
         yield page
         remaining = remaining[end:].lstrip()
 
@@ -111,7 +133,7 @@ class State:
         self.directory = directory
         self.path = directory / f"issue-{issue}.json"
         self.data = {"processed": [], "pr": None, "worktree": None, "status": "waiting",
-                     "inflight": None, "notification": None}
+                     "inflight": None, "notification": None, "verified_published_sha": None}
         if self.path.exists():
             self.data.update(json.loads(self.path.read_text(encoding="utf-8")))
 
@@ -128,7 +150,7 @@ def task_lock(directory: Path):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise BridgeError("Another bridge process is active for this repository") from None
+            raise BridgeError("此仓库已有 bridge 进程运行") from None
         try:
             yield
         finally:
@@ -151,15 +173,15 @@ class Bridge:
     def find_pr(self) -> dict | None:
         prs = json.loads(checked(self.gh("pr", "list", "--repo", self.repository,
                                        "--head", self.branch, "--base", "main", "--state", "all",
-                                       "--json", "number,url,state,isCrossRepository")))
+                                       "--json", "number,url,state,isCrossRepository,headRefOid")))
         prs = [pr for pr in prs if not pr.get("isCrossRepository", False)]
         opened = [pr for pr in prs if pr["state"] == "OPEN"]
         if len(opened) > 1:
-            raise BridgeError("Multiple open PRs for task branch; resolve before continuing")
+            raise BridgeError("任务分支存在多个 open PR；请先解决冲突")
         if opened:
             return opened[0]
         if prs:
-            raise BridgeError("Task PR is closed or merged; refusing to create a duplicate")
+            raise BridgeError("任务 PR 已关闭或已合并；拒绝创建重复 PR")
         return None
 
     def comments(self) -> list[dict]:
@@ -186,7 +208,7 @@ class Bridge:
             if (path == self.root or path.name != "repo"
                     or not path.parent.name.startswith(f"scout-bridge-issue-{self.issue}-")
                     or path.parent.parent != Path(tempfile.gettempdir()).resolve()):
-                raise BridgeError("Task branch is checked out outside a bridge temporary worktree")
+                raise BridgeError("任务分支位于 bridge 临时 worktree 之外")
             checked(self.git("rev-parse", "--show-toplevel", cwd=path))
             self.state.data["worktree"] = str(path)
             self.state.save()
@@ -234,64 +256,91 @@ class Bridge:
         for name in list(environment):
             if re.search(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH", name, re.I):
                 environment.pop(name)
-        environment.update(TMPDIR=str(path), PYTHONDONTWRITEBYTECODE="1",
+        environment.update(TMPDIR=str(self.runtime_directory(path)), PYTHONDONTWRITEBYTECODE="1",
                            PYTHONPATH=str(path), GIT_TERMINAL_PROMPT="0")
         return run(command, path, input=prompt, env=environment, timeout=self.timeout)
 
+    def runtime_directory(self, path: Path) -> Path:
+        directory = path / ".bridge-state" / "runtime"
+        if not directory.resolve().is_relative_to(path.resolve()):
+            raise BridgeError("临时目录位于 worktree 之外")
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return directory
+
+    def unstage_runtime_artifacts(self, path: Path) -> None:
+        # Recover only newly staged runtime artifacts from older bridge versions.
+        # Preserve their files and all source edits; never alter previously tracked files.
+        added = checked(self.git("diff", "--cached", "--name-only", "--diff-filter=A", "-z", cwd=path))
+        for filename in filter(None, added.split("\0")):
+            if runtime_artifact(filename):
+                checked(self.git("restore", "--staged", "--", f":(literal){filename}", cwd=path))
+
+    def validate_staging(self, path: Path) -> None:
+        filenames = checked(self.git("diff", "--cached", "--name-only", "-z", cwd=path)).split("\0")
+        for filename in filter(None, filenames):
+            item = Path(filename)
+            if (runtime_artifact(filename)
+                    or any(part in {".codex", ".agents", ".venv", ".bridge-state", "browser_profiles", "data", "output"}
+                    for part in item.parts)
+                    or (item.name.startswith(".env") and item.name != ".env.example")
+                    or item.name.lower() in {"auth.json", "cookies", "cookies-journal", "local state"}
+                    or re.search(r"\.(db|sqlite[3]?)(-|$)|\.(pem|key)$", item.name, re.I)
+                    or item.name.startswith("storage_state") or item.suffix == ".har"
+                    or not (path / item).resolve().is_relative_to(path.resolve())):
+                print(f"本地诊断：拒绝暂存路径 {redact(ascii(filename))}", flush=True)
+                raise BridgeError("暂存区包含敏感、生成或外部文件；拒绝 commit/push")
+
     def verify(self, path: Path) -> list[Result]:
+        self.unstage_runtime_artifacts(path)
+        self.validate_staging(path)
         # Force imports from the worktree rather than the main checkout's editable install.
         environment = os.environ.copy()
         for name in list(environment):
             if re.search(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH", name, re.I):
                 environment.pop(name)
-        environment.update(PYTHONPATH=str(path), PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(path))
+        environment.update(PYTHONPATH=str(path), PYTHONDONTWRITEBYTECODE="1",
+                           TMPDIR=str(self.runtime_directory(path)))
         results = [run([str(self.python), "-m", "pytest"], path, env=environment,
                        timeout=self.timeout), self.git("diff", "--check", cwd=path),
                    self.git("diff", "--cached", "--check", cwd=path)]
         for result in results:
-            print(f"Verify: {shlex.join(result.command)} | exit {result.returncode} | summary: {redact(result.summary)}", flush=True)
+            print(f"验证： {shlex.join(result.command)} | 退出码 {result.returncode} | 摘要： {redact(result.summary)}", flush=True)
             # Captured diagnostics stay local, sanitized, bounded, and outside persistent state.
             if result.returncode:
-                print(redact((result.stdout + "\n" + result.stderr)[-1500:]), flush=True)
+                local_diagnostic(result)
         return results
 
     def publish(self, path: Path, comment_id: int, evidence: str) -> dict | None:
         branch = checked(self.git("branch", "--show-current", cwd=path)).strip()
         if branch != self.branch:
-            raise BridgeError("Worktree branch changed; refusing commit/push")
+            raise BridgeError("worktree 分支已改变；拒绝 commit/push")
+        self.unstage_runtime_artifacts(path)
+        self.validate_staging(path)
         changed = checked(self.git("status", "--porcelain", "--untracked-files=all", cwd=path)).strip()
         if changed:
             checked(self.git("add", "--all", cwd=path))
-            filenames = checked(self.git("diff", "--cached", "--name-only", "-z", cwd=path)).split("\0")
-            for filename in filter(None, filenames):
-                item = Path(filename)
-                if (any(part in {".codex", ".agents", ".bridge-state", "browser_profiles", "data", "output"}
-                        for part in item.parts)
-                        or (item.name.startswith(".env") and item.name != ".env.example")
-                        or item.name.lower() in {"auth.json", "cookies", "cookies-journal", "local state"}
-                        or re.search(r"\.(db|sqlite[3]?)(-|$)|\.(pem|key)$", item.name, re.I)
-                        or item.name.startswith("storage_state") or item.suffix == ".har"
-                        or not (path / item).resolve().is_relative_to(path.resolve())):
-                    raise BridgeError("Sensitive/generated/external file staged; refusing commit/push")
+            self.validate_staging(path)
             checked(self.git("diff", "--cached", "--check", cwd=path))
-            checked(self.git("commit", "-m", f"Implement issue #{self.issue}, supervisor comment {comment_id}", cwd=path))
+            checked(self.git("commit", "-m", f"实现 issue #{self.issue}，supervisor 评论 {comment_id}", cwd=path))
         # A previous crash can leave a verified local commit without a push/PR.
         ahead = checked(self.git("rev-list", "--count", f"origin/main..{self.branch}", cwd=path)).strip()
         if not changed and ahead == "0":
             return self.state.data["pr"]
+        verified_sha = checked(self.git("rev-parse", "HEAD", cwd=path)).strip()
         checked(self.git("push", "--set-upstream", "origin", f"HEAD:refs/heads/{self.branch}", cwd=path))
         pr = self.find_pr()
         if not pr:
-            body = (f"Implements the supervisor task tracked in #{self.issue}.\n\n"
-                    "Control issue remains open during review. The bridge never merges.\n\n"
-                    f"Independent verification:\n{evidence}\n")
+            body = (f"实现控制 issue #{self.issue} 中的 supervisor 任务。\n\n"
+                    "审核期间控制 issue 保持 open。bridge 绝不自动 merge。\n\n"
+                    f"独立验证：\n{evidence}\n")
             checked(self.gh("pr", "create", "--repo", self.repository, "--base", "main",
-                            "--head", self.branch, "--title", f"Implement supervisor task #{self.issue}",
+                            "--head", self.branch, "--title", f"实现 supervisor 任务 #{self.issue}",
                             "--body-file", "-", input=body))
             pr = self.find_pr()
             if not pr:
-                raise BridgeError("PR creation returned without an associated open PR")
+                raise BridgeError("PR 创建后未找到关联的 open PR")
         self.state.data["pr"] = pr
+        self.state.data["verified_published_sha"] = verified_sha
         self.state.save()
         return pr
 
@@ -315,7 +364,7 @@ class Bridge:
         if self.state.data["inflight"] is not None:
             previous = self.state.data["inflight"]
             self.state.data.update(inflight=None, status="failed")
-            self.notify(f"[BRIDGE] Comment {previous} was interrupted. It will not run again; post a new owner instruction to continue.")
+            self.notify(f"[BRIDGE] 评论 {previous} 执行中断，不会重复运行；请提交新的 owner 指令以继续。")
         # Refresh even a persisted PR before allowing any model/worktree writes.
         self.state.data["pr"] = self.find_pr()
         self.state.save()
@@ -332,27 +381,37 @@ class Bridge:
             self.state.data["inflight"] = identifier
             self.state.save()  # Claim before starting any model/subprocess work.
             if kind == "APPROVED":
-                self.state.data.update(status="complete", inflight=None)
-                self.notify(f"[BRIDGE] Supervisor approved task #{self.issue}; complete. No merge performed.")
+                # Re-read at approval time, not only at the start of the polling batch.
+                try:
+                    pr = self.find_pr()
+                    expected = self.state.data["verified_published_sha"]
+                    if not pr or not expected or pr.get("headRefOid") != expected:
+                        raise BridgeError("当前 open PR head SHA 与最后独立验证并 push 的 SHA 不一致或记录缺失；请提交新的 [SUPERVISOR][REVIEW] 重新验证")
+                except BridgeError as exc:
+                    self.state.data.update(status="failed", inflight=None)
+                    self.notify(f"[BRIDGE] 拒绝完成任务：{exc}。不会 merge。")
+                    continue
+                self.state.data.update(status="complete", inflight=None, pr=pr)
+                self.notify(f"[BRIDGE] 任务 #{self.issue} 已获批准，commit {expected} 验收完成。未执行 merge。")
                 return True
-            print(f"Processing {kind} comment {identifier} on {self.branch}", flush=True)
+            print(f"正在 {self.branch} 处理 {kind} 评论 {identifier}", flush=True)
             try:
                 path = self.worktree()
                 result = self.codex(path, comment["body"])
-                print(f"Codex exit {result.returncode}; stdout/stderr captured and withheld", flush=True)
+                print(f"Codex 退出码 {result.returncode}；stdout/stderr 已捕获并隐藏", flush=True)
                 if result.returncode:
-                    raise BridgeError(f"Codex failed (exit {result.returncode}); stdout/stderr captured and withheld")
+                    raise BridgeError(f"Codex 失败（退出码 {result.returncode}）；stdout/stderr 已捕获并隐藏")
                 results = self.verify(path)
-                evidence = "\n".join(f"- `{shlex.join(r.command)}`: exit {r.returncode}; summary: {redact(r.summary)}" for r in results)
+                evidence = "\n".join(f"- `{shlex.join(r.command)}`: 退出码 {r.returncode}；摘要： {redact(r.summary)}" for r in results)
                 if any(r.returncode for r in results):
-                    raise BridgeError(f"Independent verification failed.\n{evidence}")
+                    raise BridgeError(f"独立验证失败。\n{evidence}")
                 pr = self.publish(path, identifier, evidence)
                 self.state.data.update(status="review", inflight=None)
-                status = f"PR #{pr['number']}: {pr['url']}" if pr else "No changes; no PR created."
-                message = f"[BRIDGE] Comment {identifier} verified. {status}\n\n{evidence}"
+                status = f"PR #{pr['number']}: {pr['url']}" if pr else "无变更；未创建 PR。"
+                message = f"[BRIDGE] 评论 {identifier} 已通过验证。 {status}\n\n{evidence}"
             except BridgeError as exc:
                 self.state.data.update(status="failed", inflight=None)
-                message = f"[BRIDGE] Comment {identifier} failed. {exc}\nWaiting for a new owner instruction; no success claimed."
+                message = f"[BRIDGE] 评论 {identifier} 失败。 {exc}\n等待新的 owner 指令；未报告成功。"
             self.notify(message)
         return False
 
@@ -360,18 +419,21 @@ class Bridge:
 def positive(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be greater than zero")
+        raise argparse.ArgumentTypeError("必须大于零")
     return parsed
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--issue", type=positive, required=True, help="GitHub control issue number")
-    parser.add_argument("--python", type=Path, help="Test interpreter (default: main checkout/.venv/bin/python)")
-    parser.add_argument("--poll-seconds", type=positive, default=30)
-    parser.add_argument("--timeout", type=positive, default=1800, help="Codex/pytest timeout in seconds")
-    parser.add_argument("--once", action="store_true", help="Process one polling batch, then return")
-    parser.add_argument("--inspect", action="store_true", help="Read-only discovery and marker listing; no Codex, writes, or comments")
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
+    parser.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    parser._positionals.title = "位置参数"
+    parser._optionals.title = "选项"
+    parser.add_argument("--issue", type=positive, required=True, help="GitHub 控制 issue 编号")
+    parser.add_argument("--python", type=Path, help="测试解释器（默认：主 checkout/.venv/bin/python）")
+    parser.add_argument("--poll-seconds", type=positive, default=30, help="轮询间隔秒数（默认：30）")
+    parser.add_argument("--timeout", type=positive, default=1800, help="Codex/pytest 超时秒数")
+    parser.add_argument("--once", action="store_true", help="处理一次轮询后退出")
+    parser.add_argument("--inspect", action="store_true", help="只读查看仓库与 marker；不调用 Codex、不写入、不发评论")
     args = parser.parse_args(argv)
     try:
         root = Path(checked(run(["git", "rev-parse", "--show-toplevel"], Path.cwd())).strip()).resolve()
@@ -382,30 +444,30 @@ def main(argv: list[str] | None = None) -> int:
         remote = checked(run(["git", "remote", "get-url", "origin"], root)).strip()
         repository = json.loads(checked(run(["gh", "repo", "view", remote, "--json", "nameWithOwner"], root)))["nameWithOwner"]
         if not re.fullmatch(r"nn10n10/[A-Za-z0-9_.-]+", repository):
-            raise BridgeError("Only repositories owned by nn10n10 are accepted")
+            raise BridgeError("仅接受 nn10n10 拥有的仓库")
         python = (args.python or primary / ".venv/bin/python").absolute()
         state = State(primary / ".bridge-state", args.issue)
         bridge = Bridge(root, repository, args.issue, python, state, timeout=args.timeout)
         if args.inspect:
             state.data["pr"] = bridge.find_pr()
             comments = bridge.comments()
-            print(f"Repository: {repository}; issue: {args.issue}; branch: {bridge.branch}")
-            print(f"Associated PR: {state.data['pr']['number'] if state.data['pr'] else 'none'}")
+            print(f"仓库：{repository}；issue：{args.issue}；分支：{bridge.branch}")
+            print(f"关联 PR： {state.data['pr']['number'] if state.data['pr'] else 'none'}")
             for comment in comments:
                 if kind := instruction(comment):
-                    print(f"Owner instruction: comment {comment['id']} {kind}")
+                    print(f"owner 指令：评论 {comment['id']} {kind}")
             return 0
         if not python.is_file():
-            raise BridgeError("Test interpreter unavailable; configure --python")
+            raise BridgeError("测试解释器不可用；请配置 --python")
         with task_lock(state.directory):
             # Reload after acquiring lock; another process may have saved state meanwhile.
             bridge.state = State(state.directory, args.issue)
-            print(f"Bridge: {repository} issue #{args.issue}; branch {bridge.branch}", flush=True)
+            print(f"开发桥： {repository} issue #{args.issue}；分支 {bridge.branch}", flush=True)
             while True:
                 try:
                     complete = bridge.poll()
                 except BridgeError as exc:
-                    print(f"Bridge: {exc}", flush=True)
+                    print(f"开发桥： {exc}", flush=True)
                     if args.once:
                         return 1
                     complete = False
@@ -413,13 +475,13 @@ def main(argv: list[str] | None = None) -> int:
                     return 1 if bridge.state.data["status"] == "failed" else 0
                 time.sleep(args.poll_seconds)
     except KeyboardInterrupt:
-        print("Bridge stopped; interrupted instructions will not rerun on restart.")
+        print("开发桥已停止；中断的指令在重启后不会重复运行。")
         return 130
     except BridgeError as exc:
-        print(f"Bridge stopped: {exc}")
+        print(f"开发桥已停止： {exc}")
         return 1
     except (ValueError, OSError, KeyError):
-        print("Bridge stopped: command/state discovery failed; raw output withheld. Check gh/git setup and bridge state.")
+        print("开发桥已停止： 命令或状态读取失败；原始输出已隐藏。请检查 gh/git 配置及 bridge 状态。")
         return 1
 
 

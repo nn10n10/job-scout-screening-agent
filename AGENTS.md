@@ -7,6 +7,7 @@
 - The development supervisor bridge is separate from the classifier: it may run non-interactive Codex with workspace-write only inside its isolated temporary git worktree. It must exclude other writable roots, disable network/browser/app access, and never grant writes to the user's main checkout. The bridge itself handles verification, commits and pushes to `agent/*`, and PR creation; it never merges.
 - Treat existing real evaluations as user data. Do not overwrite them during development or tests; in particular preserve the already completed Codex evaluations. Prefer `--replace-provider` and `--dry-run` over broad `--force`.
 - KEEP requires evidence that Cloud/Infrastructure/Platform/DevOps/SRE is one of the job's main responsibilities. Keywords such as AWS/Terraform/CI/CD alone are insufficient. Missing evidence should remain unknown or MAYBE, not be invented.
+- User-facing project output (README, CLI help, runtime logs, GitHub status and acceptance summaries) defaults to Simplified Chinese, preserving technical terms and commands. Internal prompts, identifiers, tests and comments may use English.
 - Explanatory evaluation fields (`summary`, `reasons`, `concerns`) use Simplified Chinese, preserving company names, job titles, and technical terms in their original language.
 
 ## Implementation and verification workflow

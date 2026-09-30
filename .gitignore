@@ -37,6 +37,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .bridge-state/
+.bridge-tmp/
+pytest-of-*/
+codex-bwrap-synthetic-mount-targets-*/
 *.py[cod]
 *.egg-info/
 tests/fixtures/*
