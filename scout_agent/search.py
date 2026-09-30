@@ -109,9 +109,12 @@ class SearchStore:
           payload TEXT NOT NULL, provider TEXT NOT NULL,
           PRIMARY KEY(job_id, content_hash, policy_version));
         ''')
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS search_source_state (
+            source_label TEXT PRIMARY KEY, next_deep_page INTEGER NOT NULL DEFAULT 2,
+            last_scanned_at TEXT, cycle_count INTEGER NOT NULL DEFAULT 0)""")
         # Additive migration also handles the previously shipped Search schema.
         for table, columns in {
-            'search_jobs': {'salary_min': 'INTEGER', 'salary_max': 'INTEGER'},
+            'search_jobs': {'salary_min': 'INTEGER', 'salary_max': 'INTEGER', 'first_seen_at': 'TEXT', 'last_seen_at': 'TEXT'},
             'search_evaluations': {'model_name': 'TEXT', 'evaluated_at': 'TEXT'},
         }.items():
             existing = {row[1] for row in self.conn.execute(f'PRAGMA table_info({table})')}
@@ -125,12 +128,32 @@ class SearchStore:
                               (low, high, row['job_id']))
         self.conn.commit()
 
+    def source_cursor(self, source, max_depth):
+        row = self.conn.execute('SELECT next_deep_page FROM search_source_state WHERE source_label=?', (source,)).fetchone()
+        return row[0] if row and 2 <= row[0] <= max_depth else 2
+
+    def advance_source(self, source, next_page, wrapped=False):
+        self.conn.execute("""INSERT INTO search_source_state(source_label,next_deep_page,last_scanned_at,cycle_count)
+            VALUES(?,?,?,?) ON CONFLICT(source_label) DO UPDATE SET
+            next_deep_page=excluded.next_deep_page,last_scanned_at=excluded.last_scanned_at,
+            cycle_count=search_source_state.cycle_count+excluded.cycle_count""",
+            (source, next_page, datetime.now(timezone.utc).isoformat(), int(wrapped)))
+        self.conn.commit()
+
+    def existing_job(self, job_id):
+        row = self.conn.execute('SELECT * FROM search_jobs WHERE job_id=?', (job_id,)).fetchone()
+        return Job(row['job_id'], row['url'], json.loads(row['payload']), json.loads(row['keywords'])) if row else None
+
     def save_job(self, job):
         old = self.conn.execute('SELECT keywords FROM search_jobs WHERE job_id=?', (job.job_id,)).fetchone()
         keywords = sorted(set(job.matched_keywords + (json.loads(old[0]) if old else [])))
         job.matched_keywords = keywords
         self.conn.execute('INSERT INTO search_jobs(job_id,url,payload,keywords,salary_min,salary_max) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET url=excluded.url,payload=excluded.payload,keywords=excluded.keywords,salary_min=excluded.salary_min,salary_max=excluded.salary_max',
                           (job.job_id, job.url, json.dumps(compact_jd(job.fields), ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), *parse_annual_salary(job.fields.get('salary', ''))))
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute('UPDATE search_jobs SET last_seen_at=? WHERE job_id=?', (now, job.job_id))
+        if not old:
+            self.conn.execute('UPDATE search_jobs SET first_seen_at=? WHERE job_id=?', (now, job.job_id))
         self.conn.commit()
 
     def cached(self, job, policy):
@@ -185,10 +208,14 @@ class SearchCodex(CodexClassifier):
 
 def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                max_model_jobs=20, batch_size=8, pages_per_keyword=2, early_stop=15,
-               policy_version=POLICY_VERSION):
-    if min(max_jobs, max_model_jobs, batch_size, pages_per_keyword, early_stop) < 1:
+               policy_version=POLICY_VERSION, coverage_pages=2, max_depth=15):
+    incremental = pages_per_keyword is None
+    if coverage_pages < 1 or max_depth < 2:
+        raise ValueError("coverage-pages 必须为正整数，max-depth 至少为 2。")
+    if min(max_jobs, max_model_jobs, batch_size, pages_per_keyword or 1, early_stop) < 1:
         raise ValueError('搜索预算必须为正整数。')
     stats = dict.fromkeys(('raw_cards', 'unique_jobs', 'list_drops', 'detail_drops', 'cache_hits', 'model_jobs', 'batches', 'details', 'deferred', 'TARGET', 'POSSIBLE', 'DROP'), 0)
+    stats.update(pages_scanned=0, new_jobs=0, known_jobs=0, cursors={}, discovery={})
     seen, results, pending = {}, {}, []
 
     def accept(job, result, provider):
@@ -216,19 +243,56 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
 
     stop = False
     for keyword in keywords:
-        for page in range(1, pages_per_keyword + 1):
+        cursor = store.source_cursor(keyword, max_depth)
+        if incremental:
+            stats['cursors'][keyword] = {'before': cursor, 'after': cursor}
+            pages = [1] + list(range(cursor, min(max_depth + 1, cursor + coverage_pages)))
+        else:
+            pages = range(1, pages_per_keyword + 1)
+        for page in pages:
             cards = adapter.search_cards(keyword, page)
+            stats['pages_scanned'] += 1
             stats['raw_cards'] += len(cards)
+            page_complete = True
             for card in cards:
                 if card.job_id in seen:
                     job = seen[card.job_id]
                     if keyword not in job.matched_keywords:
                         job.matched_keywords.append(keyword)
-                        store.save_job(job)
+                        if store.existing_job(job.job_id):
+                            store.save_job(job)
                     continue
                 seen[card.job_id] = card
                 card.matched_keywords.append(keyword)
                 stats['unique_jobs'] += 1
+                existing = store.existing_job(card.job_id)
+                stats['known_jobs' if existing else 'new_jobs'] += 1
+                stats['discovery'][card.job_id] = 'KNOWN' if existing else 'NEW'
+                if incremental and existing:
+                    existing.matched_keywords.append(keyword)
+                    card.fields = existing.fields
+                    card.matched_keywords = existing.matched_keywords
+                    store.save_job(card)
+                    cached = store.cached(card, policy_version)
+                    if cached:
+                        stats['cache_hits'] += 1
+                        continue
+                    if list_drop(card.fields.get('title', '')):
+                        stats['list_drops'] += 1
+                        accept(card, SearchEvaluation(verdict='DROP', summary='列表标题明确无关。'), 'local')
+                        continue
+                    if reason := detail_drop(card.fields):
+                        stats['detail_drops'] += 1
+                        accept(card, SearchEvaluation(verdict='DROP', summary=reason), 'local')
+                        continue
+                    # Resume failed/deferred model evaluations with saved details.
+                    if stats['model_jobs'] + len(pending) < max_model_jobs:
+                        pending.append(card)
+                        if len(pending) >= batch_size:
+                            flush()
+                    else:
+                        stats['deferred'] += 1
+                    continue
                 if list_drop(card.fields.get('title', '')):
                     store.save_job(card)
                     stats['list_drops'] += 1
@@ -236,7 +300,10 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                     continue
                 if stats['details'] >= max_jobs:
                     stats['deferred'] += 1
+                    if incremental:
+                        continue
                     stop = True
+                    page_complete = False
                     break
                 fields = adapter.job_detail(card)
                 card.fields = compact_jd(fields)
@@ -257,14 +324,22 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                 else:
                     # Budget exhaustion remains pending, never invent a model verdict.
                     stats['deferred'] += 1
-                if stats['TARGET'] + stats['POSSIBLE'] >= early_stop:
+                if not incremental and stats['TARGET'] + stats['POSSIBLE'] >= early_stop:
                     stop = True
+                    page_complete = False
                     break
             # Keep small pages across keywords in one batch. Flush when the
             # remaining candidates might meet the early-stop threshold.
             if stop or stats['TARGET'] + stats['POSSIBLE'] + len(pending) >= early_stop:
                 flush()
-            if stop or stats['TARGET'] + stats['POSSIBLE'] >= early_stop:
+            if incremental and page_complete:
+                flush()
+                if page > 1 or not cards:
+                    wrapped = not cards or page >= max_depth
+                    next_page = 2 if wrapped else page + 1
+                    store.advance_source(keyword, next_page, wrapped)
+                    stats['cursors'][keyword]['after'] = next_page
+            if stop or (not incremental and stats['TARGET'] + stats['POSSIBLE'] >= early_stop):
                 stop = True
                 break
             if not cards:
@@ -272,7 +347,8 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
         if stop:
             break
     flush()
-    return list(results.values()), stats
+    ordered = sorted(results.values(), key=lambda pair: (stats['discovery'].get(pair[0].job_id) != 'NEW', pair[1].verdict != 'TARGET'))
+    return ordered, stats
 
 
 def render_search(results, stats=None):
@@ -291,6 +367,7 @@ def generate_search_report(output_dir, results, stats):
     html.write_text(render_search(results, stats), encoding='utf-8')
     data.write_text(json.dumps({'source_kind': 'search', 'stats': stats, 'results': [
         {'job_id': j.job_id, 'url': j.url, 'jd': j.fields, 'matched_keywords': j.matched_keywords,
+         'discovery': stats.get('discovery', {}).get(j.job_id, 'UNKNOWN'),
          'evaluation': e.model_dump()} for j, e in results]}, ensure_ascii=False, indent=2), encoding='utf-8')
     return html, data
 
@@ -322,9 +399,15 @@ def search_command(args, settings, *, adapter=None):
                         SearchCodex(settings.codex_model, RULES, 'low'),
                         keywords=args.keyword or KEYWORDS, max_jobs=args.max_jobs or 30,
                         max_model_jobs=args.max_model_jobs, batch_size=settings.codex_batch_size,
-                        pages_per_keyword=args.pages_per_keyword)
-                except CodexClassifierError:
+                        pages_per_keyword=args.pages_per_keyword,
+                        coverage_pages=getattr(args, 'coverage_pages', 2),
+                        max_depth=getattr(args, 'max_depth', 15))
+                except CodexClassifierError as exc:
                     import sys
+                    category = exc.category
+                    if category not in {'quota', 'authentication', 'timeout', 'invalid_json', 'cli_execution_error'}:
+                        category = 'authentication' if category == 'auth' else 'cli_execution_error'
+                    print(f'Codex category: {category}', file=sys.stderr)
                     print('Codex 模型判断失败（可能为配额、认证、超时或返回格式问题）。'
                           '已成功的缓存、本地及模型结果保留；失败批次未保存。'
                           '剩余候选可下次续跑。', file=sys.stderr)
@@ -334,8 +417,16 @@ def search_command(args, settings, *, adapter=None):
             page.close()
     labels = {'raw_cards': '原始搜索卡片', 'unique_jobs': '去重后职位', 'list_drops': '列表本地排除',
               'detail_drops': '详情本地排除', 'cache_hits': '缓存复用', 'model_jobs': '送入 Codex',
+              'pages_scanned': '扫描页数', 'new_jobs': 'NEW 职位', 'known_jobs': 'KNOWN 职位',
+              'cursors': '每 source cursor before → after', 'discovery': '本轮发现状态',
               'batches': '模型调用批次数', 'details': '已读取详情', 'deferred': '预算待处理'}
     for key, value in stats.items():
+        if key == 'discovery':
+            continue
+        if key == 'cursors':
+            for source, cursor in value.items():
+                print(f"{source} cursor: {cursor['before']} → {cursor['after']}")
+            continue
         print(f'{labels.get(key, key)}: {value}')
     print(f'Search 报告: {paths[0]}；JSON: {paths[1]}')
     return 0
