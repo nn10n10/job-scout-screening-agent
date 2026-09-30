@@ -345,3 +345,16 @@ Search 不稳定或首次运行时可配置较小 `CODEX_BATCH_SIZE=2`；全局�
 Codex 失败仅输出安全 category，不输出 JD/raw stderr。成功批次保留，失败批次下次续跑。
 代码验证只使用虚构数据和 mocked 模型；真实验收由用户本机已有 Chrome CDP 连续两次小预算 AWS Search 完成，
 确认 page 1 固定、深页前进、KNOWN 不重复大量送模型。真实验收前不发送 `[SUPERVISOR][APPROVED]`，Bridge 不 merge。
+
+### WebUI 增量 Green Search
+
+启动 `python -m scout_agent web`，打开 `http://127.0.0.1:8765/search`。
+勾选已验证 source 后点击“开始增量搜索”；默认 coverage_pages=2、max_depth=15、
+max_jobs=30、max_model_jobs=20。高级参数中的 Codex batch size 默认 2，仅影响该次子进程。
+需要已登录且可连接的 Chrome CDP；招聘网站操作仍然只读。
+
+页面轮询后台状态，同一进程只允许一个 Search run；重启后运行状态回到 idle。
+“本轮搜索状态/统计”展示安全的当前 source/page 进度，以及计数和 pages/cursor（CLI 完成时输出）；
+“当前候选池”展示持久化历史评价，优先 TARGET/POSSIBLE，DROP 折叠。
+NEW 0、KNOWN 增加也是正常增量结果。失败只显示安全类别，可稍后重试并复用已有缓存。
+服务仅绑定 127.0.0.1，POST 要求页面随机 CSRF token，不自动打开浏览器。

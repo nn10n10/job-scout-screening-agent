@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Green Search 候选池</title><link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}"></head>
+<body><main class="shell"><a href="/">Scout 筛选 Dashboard</a>
+<header class="page-header"><p class="eyebrow">GREEN SEARCH · READ-ONLY</p><h1>Green Search 增量搜索</h1>
+<p>来源：search（主动搜索）。按钮启动本地只读扫描，需要已登录的 Chrome CDP。</p></header>
+<form id="search-form" class="filters">
+<fieldset><legend>搜索 source</legend>{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source }}</label> {% endfor %}</fieldset>
+{% for name in ['coverage_pages','max_depth'] %}<label class="field">{{ name }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required></label>{% endfor %}
+<details><summary>高级参数</summary>{% for name in ['max_jobs','max_model_jobs','codex_batch_size'] %}<label class="field">{{ name }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required></label>{% endfor %}<p>batch size 仅影响本次运行。</p></details>
+<button id="start" type="submit" disabled>开始增量搜索</button></form>
+<section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="time"></p><p id="error"></p><pre id="output"></pre></section>
+<h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。优先显示 TARGET / POSSIBLE；未评价职位保留待处理。</p>
+<section class="cards">{% for card in cards %}{% if card.verdict == 'DROP' %}<details><summary>DROP · {{ card.company }} · {{ card.title }}</summary>{% endif %}
+<article class="card"><span class="verdict">{{ card.verdict }}</span><p class="company">{{ card.company or 'UNKNOWN' }}</p><h2>{{ card.title or 'UNKNOWN' }}</h2>
+<p>年收：{{ card.salary or 'UNKNOWN' }}；地点：{{ card.location or 'UNKNOWN' }}</p><p>matched keyword：{{ card.sources|join('、') }}</p><p>{{ card.summary }}</p><p>主要风险 / 缺口：{{ card.concerns|join('；') or 'UNKNOWN' }}</p>
+{% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Green 原始职位 ↗</a>{% endif %}</article>
+{% if card.verdict == 'DROP' %}</details>{% endif %}{% else %}<p>当前暂无候选结果。</p>{% endfor %}</section>
+</main>
+<script>
+const csrf = {{ csrf_token|tojson }};
+const form = document.getElementById('search-form'), button = document.getElementById('start');
+let previous = null;
+async function poll() {
+  try {
+    const response = await fetch('/search/run/status', {cache:'no-store'});
+    if (!response.ok) throw new Error();
+    const run = await response.json();
+    button.disabled = run.status === 'running';
+    button.textContent = run.status === 'running' ? '正在搜索' : '开始增量搜索';
+    document.getElementById('state').textContent = ({idle:'尚未开始',running:'正在搜索',succeeded:'搜索成功',failed:'搜索失败'})[run.status];
+    document.getElementById('time').textContent = run.started_at ? `开始：${run.started_at}；已运行：${run.elapsed_seconds} 秒；结束：${run.finished_at || '—'}` : '';
+    document.getElementById('output').textContent = run.summary.join('\n');
+    document.getElementById('error').textContent = run.error ? `安全错误类别：${run.error}；请检查本地配置后重试。` : '';
+    if (previous === 'running' && run.status !== 'running') { location.reload(); return; }
+    previous = run.status;
+  } catch { document.getElementById('state').textContent = '状态读取失败，请刷新页面。'; button.disabled = true; }
+  setTimeout(poll, 1500);
+}
+form.addEventListener('submit', async event => {
+  event.preventDefault(); button.disabled = true;
+  const data = {sources: [...form.querySelectorAll('[name=sources]:checked')].map(input => input.value)};
+  for (const input of form.querySelectorAll('[type=number]')) data[input.name] = Number(input.value);
+  try {
+    const response = await fetch('/search/run', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrf}, body:JSON.stringify(data)});
+    if (!response.ok) document.getElementById('error').textContent = response.status === 409 ? '正在搜索，请等待。' : '启动失败，请检查参数或刷新页面。';
+    else previous = 'running';
+  } catch { document.getElementById('error').textContent = '启动请求失败，请刷新页面。'; }
+});
+poll();
+</script></body></html>

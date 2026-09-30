@@ -401,3 +401,11 @@ def test_search_codex_invalid_response_safe(output):
     with pytest.raises(CodexClassifierError) as error:
         model.classify_jobs([job()])
     assert error.value.category == 'invalid_json'
+
+
+def test_search_progress_reports_only_source_page(store):
+    progress = []
+    _, stats, adapter, _ = run(store, [job()], progress=lambda source, page: progress.append((source, page)))
+    assert progress == adapter.pages
+    assert len(progress) == stats['pages_scanned']
+    assert all(source == 'AWS' and isinstance(page, int) for source, page in progress)

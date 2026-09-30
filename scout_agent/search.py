@@ -208,7 +208,7 @@ class SearchCodex(CodexClassifier):
 
 def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                max_model_jobs=20, batch_size=8, pages_per_keyword=2, early_stop=15,
-               policy_version=POLICY_VERSION, coverage_pages=2, max_depth=15):
+               policy_version=POLICY_VERSION, coverage_pages=2, max_depth=15, progress=None):
     incremental = pages_per_keyword is None
     if coverage_pages < 1 or max_depth < 2:
         raise ValueError("coverage-pages 必须为正整数，max-depth 至少为 2。")
@@ -251,6 +251,8 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
         else:
             pages = range(1, pages_per_keyword + 1)
         for page in pages:
+            if progress is not None:
+                progress(keyword, page)
             cards = adapter.search_cards(keyword, page)
             stats['pages_scanned'] += 1
             stats['source_pages'].setdefault(keyword, []).append(page)
@@ -416,7 +418,9 @@ def search_command(args, settings, *, adapter=None):
                         max_model_jobs=args.max_model_jobs, batch_size=settings.codex_batch_size,
                         pages_per_keyword=args.pages_per_keyword,
                         coverage_pages=getattr(args, 'coverage_pages', 2),
-                        max_depth=getattr(args, 'max_depth', 15))
+                        max_depth=getattr(args, 'max_depth', 15),
+                        progress=lambda source, number: print(
+                            f'Search progress: {source} page {number}', flush=True))
                 except CodexClassifierError as exc:
                     import sys
                     category = exc.category
