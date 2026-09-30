@@ -135,7 +135,7 @@ def test_locator_failure_never_full_page_fallback():
     def broken(selector):
         raise ValueError('fictional locator failure')
     page.locator = broken
-    with pytest.raises(ValueError):
+    with pytest.raises(GreenSearchDOMPending):
         adapter(page).search_cards('AWS', 1)
     assert all(action == 'goto' for action, _ in page.events)
 
@@ -287,3 +287,116 @@ def test_enabled_adapter_keeps_cache_batch_and_budgets(tmp_path):
                               max_model_jobs=2, batch_size=2)
         assert repeat['cache_hits'] == 2 and repeat['model_jobs'] == repeat['batches'] == 0
         assert model.calls == [2]
+
+
+@pytest.mark.parametrize('suffix', ['?canonical=fictional', '/?canonical=fictional', '?extra=1&page=2'])
+@pytest.mark.parametrize('number', [1, 2])
+def test_source_canonical_redirect(suffix, number):
+    page = Page(counts=['0求人'])
+    page.goto = lambda url, **kwargs: setattr(page, 'url', source_url('AWS') + suffix)
+    assert adapter(page).search_cards('AWS', number) == []
+
+
+@pytest.mark.parametrize('url', [
+    'http://www.green-japan.com/search/skill/AWS',
+    'https://www.green-japan.com.evil.test/search/skill/AWS',
+    'https://user@www.green-japan.com/search/skill/AWS',
+    ORIGIN + '/login', ORIGIN + '/search/skill/SRE',
+    ORIGIN + '/search/skill/AWS//', ORIGIN + '/search/skill/AWS%2f',
+])
+def test_probe_source_url_diagnostic(monkeypatch, capsys, url):
+    page = Page()
+    page.goto = lambda target, **kwargs: setattr(page, 'url', url)
+    attach(monkeypatch, page)
+    assert probe_command(SimpleNamespace(keyword=['AWS'], max_jobs=5), settings()) == 1
+    output = capsys.readouterr().err
+    assert 'source=AWS stage=SOURCE_URL reason=SOURCE_URL_MISMATCH' in output
+    assert url not in output
+    assert not page.events
+
+
+@pytest.mark.parametrize('count', ['8715件ヒットしました。', '８，７１５件ヒットしました。',
+                                     '検索結果 2015企業 8715求人', '検索結果 ２，０１５企業 ８，７１５求人'])
+def test_observed_count_positive_fails_closed(count):
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        adapter(Page(counts=[count])).search_cards('AWS', 1)
+    assert exc.value.reason == 'NO_VALID_JOB_LINKS'
+
+
+@pytest.mark.parametrize('count', ['0件ヒットしました。', '検索結果 12企業 0求人', '０求人'])
+def test_observed_count_zero(count):
+    assert adapter(Page(counts=[count])).search_cards('AWS', 1) == []
+
+
+@pytest.mark.parametrize('title,duties,stage,reason', [
+    ('', '仕事内容\nfictional', 'DETAIL_TITLE', 'TITLE_MISSING'),
+    ('PRIVATE TITLE', '仕事内容', 'DETAIL_RESPONSIBILITIES', 'RESPONSIBILITIES_MISSING'),
+])
+def test_probe_detail_diagnostics(monkeypatch, capsys, title, duties, stage, reason):
+    page = Page([Node([], '/company/900001/job/1')], detail_title=title, duties=duties)
+    attach(monkeypatch, page)
+    assert probe_command(SimpleNamespace(keyword=['AWS'], max_jobs=5), settings()) == 1
+    output = capsys.readouterr().err
+    assert f'source=AWS stage={stage} reason={reason}' in output
+    assert 'cards=1 valid_job_links=1' in output
+    assert 'PRIVATE' not in output and '/company/' not in output
+
+
+def test_probe_unknown_count_diagnostic(monkeypatch, capsys):
+    attach(monkeypatch, Page(counts=['PRIVATE noise']))
+    assert probe_command(SimpleNamespace(keyword=['AWS'], max_jobs=5), settings()) == 1
+    output = capsys.readouterr().err
+    assert 'stage=JOB_LINKS reason=UNKNOWN_RESULT_COUNT cards=0' in output
+    assert 'PRIVATE' not in output
+
+
+@pytest.mark.parametrize('stage', ['SOURCE_NAVIGATION', 'JOB_LINKS', 'RESULT_COUNT',
+                                    'DETAIL_NAVIGATION', 'DETAIL_TITLE', 'DETAIL_RESPONSIBILITIES'])
+@pytest.mark.parametrize('timeout', [False, True])
+def test_probe_playwright_error_redaction(monkeypatch, capsys, stage, timeout):
+    from playwright.sync_api import Error, TimeoutError
+    page = Page([Node([], '/company/900001/job/1')])
+    def fail(*args, **kwargs):
+        raise (TimeoutError if timeout else Error)('PRIVATE JD https://private.invalid/?token=secret')
+    if stage == 'SOURCE_NAVIGATION':
+        page.goto = fail
+    elif stage == 'DETAIL_NAVIGATION':
+        original = page.goto
+        def goto(url, **kwargs):
+            if '/company/' in url:
+                fail()
+            original(url, **kwargs)
+        page.goto = goto
+    elif stage == 'RESULT_COUNT':
+        page.get_by_text = fail
+    elif stage == 'DETAIL_RESPONSIBILITIES':
+        page.get_by_role = fail
+    else:
+        original = page.locator
+        def locator(selector):
+            if (stage == 'JOB_LINKS' and selector != 'h1') or (stage == 'DETAIL_TITLE' and selector == 'h1'):
+                fail()
+            return original(selector)
+        page.locator = locator
+    attach(monkeypatch, page)
+    assert probe_command(SimpleNamespace(keyword=['AWS'], max_jobs=5), settings()) == 1
+    output = capsys.readouterr().err
+    reason = 'PLAYWRIGHT_TIMEOUT' if timeout else 'PLAYWRIGHT_ERROR'
+    assert f'stage={stage} reason={reason}' in output
+    assert 'PRIVATE' not in output and 'secret' not in output
+
+
+def test_probe_empty_source_continues_with_total_budget(monkeypatch, capsys):
+    page = Page([Node([], f'/company/900001/job/{n}') for n in range(1, 9)])
+    original = page.goto
+    def goto(url, **kwargs):
+        original(url, **kwargs)
+        if '/search/' in url:
+            page.counts = ['0求人'] if '/AWS' in url else ['8件ヒットしました。']
+            page.nodes = [] if '/AWS' in url else [Node([], f'/company/900001/job/{n}') for n in range(1, 9)]
+    page.goto = goto
+    attach(monkeypatch, page)
+    assert probe_command(SimpleNamespace(keyword=['AWS', 'SRE'], max_jobs=5), settings()) == 0
+    output = capsys.readouterr().out
+    assert 'source=AWS cards=0' in output and 'source=SRE' in output
+    assert len([url for action, url in page.events if action == 'goto' and '/company/' in url]) == 5

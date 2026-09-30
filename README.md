@@ -302,3 +302,14 @@ Search 结果保存 provider、model_name 与 evaluated_at（UTC）；本地规�
 月给、时给及不确定文本保持 UNKNOWN，报告保留原始薪资。
 模型配额、认证、超时或格式错误返回非零退出码，并保留已成功结果；
 失败批次不保存评价，剩余候选可下次续跑。
+
+
+Green probe 失败时只输出 source label、有限的 stage/reason code 和结构数量，
+不输出职位内容、公司、URL 或 Playwright 原始错误。`CDP_CONNECT` 表示连接阶段；
+`SOURCE_NAVIGATION` / `SOURCE_URL` 表示来源导航或不安全跳转；
+`JOB_LINKS` / `RESULT_COUNT` 表示链接或结果数量结构异常；
+`DETAIL_NAVIGATION` / `DETAIL_TITLE` / `DETAIL_RESPONSIBILITIES` 表示详情导航、标题或主职责解析失败。
+`PLAYWRIGHT_TIMEOUT` / `PLAYWRIGHT_ERROR` 表示对应阶段的浏览器读取失败。
+无结果的 source 会继续下一个来源，总详情预算仍不超过 5；布局安全异常立即非零退出。
+允许同来源路径的 canonical query 或末尾斜线，仍禁止跳转到其他路径或域名。
+自动测试通过不代表 live verified；live probe 尚需用户本机执行。

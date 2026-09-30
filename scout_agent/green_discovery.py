@@ -4,9 +4,11 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from enum import Enum
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 
 from scout_agent.platforms.green import JOB_PATH, parse_job_card
 
@@ -17,10 +19,45 @@ SOURCES = {
     'Kubernetes': '/search/skill/Kubernetes', 'インフラエンジニア': '/jobtype-l/190150/01',
 }
 KEYWORDS = tuple(SOURCES)
+NUMBER = r'[0-9０-９][0-9０-９,，]*'
 RESULT_COUNT = re.compile(
-    r'^\s*(?:(?:検索結果|求人(?:数)?|該当(?:する)?求人(?:数)?|全|合計)\s*[:：]?\s*)?'
-    r'[0-9０-９][0-9０-９,，]*\s*件(?:の求人|の検索結果)?\s*$'
+    rf'^\s*(?:(?:(?:検索結果|求人(?:数)?|該当(?:する)?求人(?:数)?|全|合計)\s*[:：]?\s*)?'
+    rf'{NUMBER}\s*件(?:ヒットしました。|の求人|の検索結果)?|'
+    rf'検索結果\s*{NUMBER}\s*企業\s*{NUMBER}\s*求人|{NUMBER}\s*求人)\s*$'
 )
+
+
+class Stage(str, Enum):
+    CDP_CONNECT = 'CDP_CONNECT'
+    SOURCE_NAVIGATION = 'SOURCE_NAVIGATION'
+    SOURCE_URL = 'SOURCE_URL'
+    JOB_LINKS = 'JOB_LINKS'
+    RESULT_COUNT = 'RESULT_COUNT'
+    DETAIL_NAVIGATION = 'DETAIL_NAVIGATION'
+    DETAIL_TITLE = 'DETAIL_TITLE'
+    DETAIL_RESPONSIBILITIES = 'DETAIL_RESPONSIBILITIES'
+
+
+@contextmanager
+def safety_stage(stage):
+    try:
+        yield
+    except GreenSearchDOMPending:
+        raise
+    except (PlaywrightError, ValueError) as exc:
+        reason = ('PLAYWRIGHT_TIMEOUT' if isinstance(exc, PlaywrightTimeoutError) else
+                  'PLAYWRIGHT_ERROR' if isinstance(exc, PlaywrightError) else 'PARSE_ERROR')
+        raise GreenSearchDOMPending(stage, reason) from None
+
+
+def valid_source_redirect(url, label):
+    if not isinstance(url, str) or re.search(r'[\s\x00-\x1f\x7f]', url):
+        return False
+    parts = urlsplit(url)
+    return (parts.scheme == 'https' and parts.netloc == 'www.green-japan.com'
+            and parts.path in (SOURCES[label], SOURCES[label] + '/'))
+
+
 FIELDS = ('company', 'title', 'salary', 'location', 'remote', 'responsibilities', 'required', 'preferred', 'technology')
 
 
@@ -60,7 +97,9 @@ def source_url(label, page=1):
 
 
 class GreenSearchDOMPending(RuntimeError):
-    pass
+    def __init__(self, stage, reason):
+        self.stage, self.reason = Stage(stage), reason
+        super().__init__(f'Green 安全检查失败：stage={self.stage.value} reason={reason}')
 
 
 class GreenSearchAdapter:
@@ -70,45 +109,50 @@ class GreenSearchAdapter:
 
     def search_cards(self, keyword, page):
         target = source_url(keyword, page)
-        self.page.goto(target, wait_until='domcontentloaded', timeout=15000)
-        if self.page.url != target:
-            raise GreenSearchDOMPending('Green 搜索发生异常跳转；请检查登录或 source 页面。')
-        anchors = self.page.locator('a[href*="/company/"][href*="/job/"]:visible')
-        try:
-            anchors.first.wait_for(state='visible', timeout=10000)
-        except PlaywrightTimeoutError:
-            # An explicit zero count is still required below; no DOM fallback.
-            pass
-        jobs = {}
-        valid = 0
-        nodes = anchors.all()
-        for anchor in nodes:
-            href = anchor.get_attribute('href')
-            if not href:
-                continue
+        self.last_stats = dict(cards=0, valid_job_links=0, title=0, salary=0, location=0)
+        with safety_stage(Stage.SOURCE_NAVIGATION):
+            self.page.goto(target, wait_until='domcontentloaded', timeout=15000)
+        with safety_stage(Stage.SOURCE_URL):
+            if not valid_source_redirect(self.page.url, keyword):
+                raise GreenSearchDOMPending(Stage.SOURCE_URL, 'SOURCE_URL_MISMATCH')
+        with safety_stage(Stage.JOB_LINKS):
+            anchors = self.page.locator('a[href*="/company/"][href*="/job/"]:visible')
             try:
-                job = Job.from_url(href, {})
-            except ValueError:
-                continue
-            valid += 1
-            title, salary, location = parse_job_card(anchor.locator('p:visible').all_inner_texts())
-            job.fields = {'title': title or '', 'salary': salary or '', 'location': location or ''}
-            if job.job_id not in jobs:
-                jobs[job.job_id] = job
-            else:
-                for key, value in job.fields.items():
-                    if value and not jobs[job.job_id].fields.get(key):
-                        jobs[job.job_id].fields[key] = value
+                anchors.first.wait_for(state='visible', timeout=10000)
+            except PlaywrightTimeoutError:
+                # An explicit zero count is still required below; no DOM fallback.
+                pass
+            jobs = {}
+            valid = 0
+            nodes = anchors.all()
+            for anchor in nodes:
+                href = anchor.get_attribute('href')
+                if not href:
+                    continue
+                try:
+                    job = Job.from_url(href, {})
+                except ValueError:
+                    continue
+                valid += 1
+                title, salary, location = parse_job_card(anchor.locator('p:visible').all_inner_texts())
+                job.fields = {'title': title or '', 'salary': salary or '', 'location': location or ''}
+                if job.job_id not in jobs:
+                    jobs[job.job_id] = job
+                else:
+                    for key, value in job.fields.items():
+                        if value and not jobs[job.job_id].fields.get(key):
+                            jobs[job.job_id].fields[key] = value
         # Read only explicit result-count text nodes, never body/full-page fallback.
-        counts = self.page.get_by_text(RESULT_COUNT).all_inner_texts()
-        numbers = [int(value.replace(',', '').replace('，', '')) for text in counts
-                   if RESULT_COUNT.fullmatch(text)
-                   for value in re.findall(r'([0-9０-９][0-9０-９,，]*)\s*件', text)]
-        if not jobs and (not numbers or any(numbers)):
-            raise GreenSearchDOMPending('Green 搜索布局无法确认：未找到合法职位链接。请检查 source 页面；DOM 变化需更新解析器。')
         self.last_stats = {'cards': len(nodes), 'valid_job_links': valid,
                            **{key: sum(bool(j.fields.get(key)) for j in jobs.values())
                               for key in ('title', 'salary', 'location')}}
+        with safety_stage(Stage.RESULT_COUNT):
+            counts = self.page.get_by_text(RESULT_COUNT).all_inner_texts()
+            numbers = [int(value.replace(',', '').replace('，', '')) for text in counts
+                       if RESULT_COUNT.fullmatch(text)
+                       for value in re.findall(rf'({NUMBER})\s*(?:件|求人)', text)]
+        if not jobs and (not numbers or any(numbers)):
+            raise GreenSearchDOMPending(Stage.JOB_LINKS, 'NO_VALID_JOB_LINKS' if numbers else 'UNKNOWN_RESULT_COUNT')
         return list(jobs.values())
 
     def job_detail(self, job):
@@ -135,34 +179,42 @@ def parse_job_sections(text, *, company='', title='', salary='', location=''):
 
 
 def read_green_detail(page, job):
-    checked = Job.from_url(job.url, job.fields)
-    page.goto(checked.url, wait_until='domcontentloaded', timeout=15000)
-    if Job.from_url(page.url, {}).job_id != job.job_id:
-        raise ValueError('Green 详情跳转到其他职位，已停止。')
-    heading = page.get_by_role('heading', name='仕事内容', exact=True).first
-    heading.wait_for(timeout=10000)
-    title = page.locator('h1').first.inner_text().strip()
-    text = heading.locator('xpath=../..').inner_text()
-    fields = parse_job_sections(text, company=job.fields.get('company', ''), title=title,
-                                salary=job.fields.get('salary', ''), location=job.fields.get('location', ''))
-    if not title or not fields.get('responsibilities'):
-        raise ValueError('Green 职位标题或主职责无法可靠解析，已停止。')
+    with safety_stage(Stage.DETAIL_NAVIGATION):
+        checked = Job.from_url(job.url, job.fields)
+        page.goto(checked.url, wait_until='domcontentloaded', timeout=15000)
+        if Job.from_url(page.url, {}).job_id != job.job_id:
+            raise GreenSearchDOMPending(Stage.DETAIL_NAVIGATION, 'JOB_URL_MISMATCH')
+    with safety_stage(Stage.DETAIL_TITLE):
+        title = page.locator('h1').first.inner_text().strip()
+        if not title:
+            raise GreenSearchDOMPending(Stage.DETAIL_TITLE, 'TITLE_MISSING')
+    with safety_stage(Stage.DETAIL_RESPONSIBILITIES):
+        heading = page.get_by_role('heading', name='仕事内容', exact=True).first
+        heading.wait_for(timeout=10000)
+        text = heading.locator('xpath=../..').inner_text()
+        fields = parse_job_sections(text, company=job.fields.get('company', ''), title=title,
+                                    salary=job.fields.get('salary', ''), location=job.fields.get('location', ''))
+        if not fields.get('responsibilities'):
+            raise GreenSearchDOMPending(Stage.DETAIL_RESPONSIBILITIES, 'RESPONSIBILITIES_MISSING')
     return fields
 
 
 def probe_command(args, settings):
     from scout_agent.browser.manager import BrowserManager
-    from playwright.sync_api import Error as PlaywrightError
     from scout_agent.browser.manager import CDPConnectionError
+    label, adapter = 'NONE', None
+    stage, reason = Stage.CDP_CONNECT, 'INVALID_CONFIGURATION'
     try:
         if settings.browser_mode != 'cdp':
             raise ValueError('Green probe 仅支持 BROWSER_MODE=cdp；请连接已登录 Chrome。')
         labels = args.keyword or KEYWORDS
-        for label in labels:
-            source_url(label)
+        for candidate in labels:
+            source_url(candidate)
+        label = labels[0]
         limit = args.max_jobs if args.max_jobs is not None else 5
         if not 1 <= limit <= 5:
             raise ValueError('probe --max-jobs 必须为 1～5，以限制只读详情检查。')
+        stage, reason = Stage.CDP_CONNECT, 'CDP_UNAVAILABLE'
         seen, parsed, checked = set(), 0, 0
         with BrowserManager(settings.profile_path, mode='cdp', cdp_endpoint=settings.cdp_endpoint).open() as session:
             if not session.contexts:
@@ -189,11 +241,25 @@ def probe_command(args, settings):
                     if checked >= limit:
                         break
             finally:
-                page.close()
+                # Keep the diagnostic for the failing read if cleanup also fails.
+                active_error = sys.exc_info()[0] is not None
+                try:
+                    page.close()
+                except PlaywrightError:
+                    if not active_error:
+                        raise
         if not seen or not parsed:
+            stage, reason = Stage.JOB_LINKS, 'NO_PARSEABLE_JOBS'
             raise ValueError('probe 未找到可安全解析的职位；请检查 Green source 页面与登录状态，再更新 DOM 解析器。')
         print('probe 成功：只读结构检查通过，0 model call；未写数据库或报告。')
         return 0
-    except (ValueError, GreenSearchDOMPending, PlaywrightError, CDPConnectionError):
-        print('Green probe 失败：请确认 BROWSER_MODE=cdp、Chrome CDP 可连接、Green source 页面有职位且包含 h1 / 仕事内容。DOM 变化需更新解析器；--max-jobs 限 1～5。', file=sys.stderr)
+    except (ValueError, GreenSearchDOMPending, PlaywrightError, CDPConnectionError) as exc:
+        if isinstance(exc, GreenSearchDOMPending):
+            stage, reason = exc.stage, exc.reason
+        elif isinstance(exc, PlaywrightError):
+            reason = 'PLAYWRIGHT_TIMEOUT' if isinstance(exc, PlaywrightTimeoutError) else 'PLAYWRIGHT_ERROR'
+        stats = adapter.last_stats if adapter and hasattr(adapter, 'last_stats') else {}
+        print(f'Green probe 失败：source={label} stage={stage.value} reason={reason} '
+              + ' '.join(f'{key}={value}' for key, value in stats.items())
+              + '；请检查对应阶段的 CDP 连接或 Green 页面结构，DOM 变化需更新解析器。', file=sys.stderr)
         return 1
