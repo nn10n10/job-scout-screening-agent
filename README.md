@@ -273,7 +273,7 @@ TARGET 必须有主要基础设施职责证据。模型预算耗尽的职位保�
 模型不接收整页 HTML、导航/footer 或重复字段行。全局按公司 ID + job ID 去重，
 合并实际遇到的 matched keywords。按 stable job ID + content_hash + policy_version
 永久保留历史缓存，仅 JD 内容或策略版本改变时重新评价。
-报告与 Web UI `/search` 默认展示 TARGET + POSSIBLE，DROP 仅计数。
+报告默认展示 TARGET + POSSIBLE，DROP 仅计数；Web UI `/search` 按人工状态过滤，保留 TARGET → POSSIBLE → DROP 排序。
 最终统计包括原始卡片、独立职位、本地排除、缓存、送模型职位、批次及各分类数量。
 
 **代码已启用，但自动测试不代表 live verified。首次使用前建议先运行 `--probe`。**
@@ -359,6 +359,16 @@ max_jobs=30、max_model_jobs=20。高级参数中的 Codex batch size 默认 2�
 
 页面轮询后台状态，同一进程只允许一个 Search run；重启后运行状态回到 idle。
 “本轮搜索状态/统计”展示安全的当前 source/page 进度，以及计数和 pages/cursor（CLI 完成时输出）；
-“当前候选池”展示持久化历史评价，优先 TARGET/POSSIBLE，DROP 折叠。
+“当前候选池”以单列横向列表展示持久化历史评价，默认折叠，窄屏自动堆叠。
+展开详情可查看本地 AI 摘要、理由、风险及结构化 JD；展开不会访问 Green。
+顶部可切换待处理（默认）/ 已投递 / 已排除 / 全部，并显示各状态数量；
+AI 排序仍为 TARGET → POSSIBLE → DROP，人工状态与 AI verdict 独立。
+
+人工状态仅写本地 SQLite 的独立 `search_job_user_state` 表，不向 Green 投递、
+拒绝、收藏或回复。状态按钮只在展开后显示，首次点击仅显示确认，取消不写入。
+排除或标记已投递后职位从待处理移走，可在对应过滤视图恢复到待处理；
+刷新、重启和重新扫描不会重置状态。搜索运行时禁止人工状态写入。
+历史职位没有状态记录时视为待处理，普通 GET 不执行 migration；
+首次明确状态 POST 或 writable SearchStore migration 才会创建本地状态表。
 NEW 0、KNOWN 增加也是正常增量结果。失败只显示安全类别，可稍后重试并复用已有缓存。
 服务仅绑定 127.0.0.1，POST 要求页面随机 CSRF token，不自动打开浏览器。

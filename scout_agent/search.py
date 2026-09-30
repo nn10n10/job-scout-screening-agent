@@ -112,6 +112,7 @@ class SearchStore:
         self.conn.execute("""CREATE TABLE IF NOT EXISTS search_source_state (
             source_label TEXT PRIMARY KEY, next_deep_page INTEGER NOT NULL DEFAULT 2,
             last_scanned_at TEXT, cycle_count INTEGER NOT NULL DEFAULT 0)""")
+        self.create_user_state_table()
         # Additive migration also handles the previously shipped Search schema.
         for table, columns in {
             'search_jobs': {'salary_min': 'INTEGER', 'salary_max': 'INTEGER', 'first_seen_at': 'TEXT', 'last_seen_at': 'TEXT'},
@@ -126,6 +127,40 @@ class SearchStore:
             low, high = parse_annual_salary(json.loads(row['payload']).get('salary', ''))
             self.conn.execute('UPDATE search_jobs SET salary_min=?,salary_max=? WHERE job_id=?',
                               (low, high, row['job_id']))
+        self.conn.commit()
+
+    def create_user_state_table(self):
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS search_job_user_state (
+            job_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('ACTIVE','APPLIED','EXCLUDED')),
+            updated_at TEXT NOT NULL)""")
+
+    def user_states(self):
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='search_job_user_state'"
+        ).fetchone()
+        if not exists:
+            return {}
+        return {row['job_id']: row['status'] for row in
+                self.conn.execute('SELECT job_id,status FROM search_job_user_state')}
+
+    def set_user_state(self, job_id, status):
+        if status not in ('ACTIVE', 'APPLIED', 'EXCLUDED'):
+            raise ValueError('人工状态无效')
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='search_jobs'"
+        ).fetchone()
+        if not exists or not self.conn.execute(
+            'SELECT 1 FROM search_jobs WHERE job_id=?', (job_id,)
+        ).fetchone():
+            raise KeyError(job_id)
+        current = self.user_states().get(job_id, 'ACTIVE')
+        if current != status and current != 'ACTIVE' and status != 'ACTIVE':
+            raise ValueError('请先恢复到待处理')
+        self.create_user_state_table()
+        self.conn.execute("""INSERT INTO search_job_user_state VALUES(?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at""",
+            (job_id, status, datetime.now(timezone.utc).isoformat()))
         self.conn.commit()
 
     def source_cursor(self, source, max_depth):

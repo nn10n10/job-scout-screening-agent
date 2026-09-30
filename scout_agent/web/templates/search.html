@@ -11,11 +11,45 @@
 <button id="start" type="submit" disabled>开始增量搜索</button></form>
 <section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="time"></p><p id="error"></p><pre id="output"></pre></section>
 <h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。优先显示 TARGET / POSSIBLE；未评价职位保留待处理。</p>
-<section class="cards">{% for card in cards %}{% if card.verdict == 'DROP' %}<details><summary>DROP · {{ card.company }} · {{ card.title }}</summary>{% endif %}
-<article class="card"><span class="verdict">{{ card.verdict }}</span><p class="company">{{ card.company or 'UNKNOWN' }}</p><h2>{{ card.title or 'UNKNOWN' }}</h2>
-<p>年收：{{ card.salary or 'UNKNOWN' }}；地点：{{ card.location or 'UNKNOWN' }}</p><p>matched keyword：{{ card.sources|join('、') }}</p><p>{{ card.summary }}</p><p>主要风险 / 缺口：{{ card.concerns|join('；') or 'UNKNOWN' }}</p>
-{% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Green 原始职位 ↗</a>{% endif %}</article>
-{% if card.verdict == 'DROP' %}</details>{% endif %}{% else %}<p>当前暂无候选结果。</p>{% endfor %}</section>
+<nav class="state-filters" aria-label="人工状态过滤">
+{% for value,label in [('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除'),('ALL','全部')] %}
+<a href="/search?status={{ value }}" {% if selected_status == value %}aria-current="page"{% endif %}>{{ label }}（{{ counts[value] }}）</a>
+{% endfor %}</nav>
+<p>人工状态仅保存到本地，不会向 Green 投递、拒绝或收藏。</p>
+<section class="search-list">
+{% for card in cards %}
+<article class="search-row">
+<div class="search-compact">
+<div class="search-badges"><span class="verdict">{{ card.verdict }}</span><span class="user-status">{{ {'ACTIVE':'待处理','APPLIED':'已投递','EXCLUDED':'已排除'}[card.user_status] }}</span></div>
+<div class="search-title"><h3>{{ card.title or '职位未注明' }}</h3><span class="muted">{{ card.company or '公司未注明' }}</span></div>
+<span class="compact-preview">{{ card.salary_preview or '薪资未注明' }}</span>
+<span class="compact-preview location-preview">{{ card.location_preview or '地点未注明' }}</span>
+<span class="compact-preview">{{ card.source_preview or '来源未注明' }}</span>
+{% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Green ↗</a>{% endif %}
+<button type="button" class="expand-job" aria-expanded="false" aria-controls="job-{{ loop.index }}">展开详情</button>
+</div>
+<div class="search-details" id="job-{{ loop.index }}" hidden>
+<dl>
+<dt>AI summary</dt><dd>{{ card.summary }}</dd>
+<dt>推荐理由</dt><dd>{{ card.reasons|join('；') or '未注明' }}</dd>
+<dt>主要风险 / 缺口</dt><dd>{{ card.concerns|join('；') or '未注明' }}</dd>
+{% for field,label in [('responsibilities','工作职责'),('required','必备要求'),('preferred','加分要求'),('technology','技术'),('remote','远程')] %}
+<dt>{{ label }}</dt><dd>{{ card[field] or '未注明' }}</dd>
+{% endfor %}
+{% if card.url %}<dt>Green 原始职位</dt><dd><a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.url }}</a></dd>{% endif %}
+</dl>
+<div class="user-actions" data-job-id="{{ card.job_id }}">
+{% if card.user_status == 'ACTIVE' %}
+<button type="button" data-status="APPLIED" disabled>标记已投递</button>
+<button type="button" data-status="EXCLUDED" disabled>排除</button>
+{% else %}<button type="button" data-status="ACTIVE" disabled>恢复到待处理</button>{% endif %}
+<div class="state-confirm" hidden><p class="confirm-message"></p><button type="button" class="confirm-state" disabled>确认</button><button type="button" class="cancel-state">取消</button></div>
+<p class="state-error" role="status"></p>
+</div>
+</div>
+</article>
+{% else %}<p>当前暂无候选结果。</p>{% endfor %}
+</section>
 </main>
 <script src="{{ url_for('static', path='/search_config.js') }}"></script>
 <script>
@@ -24,12 +58,55 @@ const form = document.getElementById('search-form'), button = document.getElemen
 const configLimits = {{ limits|tojson }};
 SearchConfig.restore(form, configLimits);
 let previous = null;
+function setActionsDisabled(disabled) {
+  document.querySelectorAll('[data-status], .confirm-state').forEach(action => { action.disabled = disabled; });
+}
+document.querySelectorAll('.expand-job').forEach(toggle => {
+  toggle.addEventListener('click', () => {
+    const panel = document.getElementById(toggle.getAttribute('aria-controls'));
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute('aria-expanded', String(!panel.hidden));
+    toggle.textContent = panel.hidden ? '展开详情' : '收起详情';
+    if (panel.hidden) panel.querySelector('.state-confirm').hidden = true;
+  });
+});
+document.querySelectorAll('.user-actions').forEach(actions => {
+  const confirmation = actions.querySelector('.state-confirm');
+  let pending = null;
+  actions.querySelectorAll('[data-status]').forEach(action => {
+    action.addEventListener('click', () => {
+      pending = action.dataset.status;
+      actions.querySelector('.confirm-message').textContent = ({
+        APPLIED:'确认将此职位在本地标记为已投递？不会向 Green 投递。',
+        EXCLUDED:'确认本地排除？之后可在“已排除”中恢复到待处理。',
+        ACTIVE:'确认恢复到待处理？'
+      })[pending];
+      confirmation.hidden = false;
+    });
+  });
+  actions.querySelector('.cancel-state').addEventListener('click', () => { pending = null; confirmation.hidden = true; });
+  actions.querySelector('.confirm-state').addEventListener('click', async () => {
+    if (!pending) return;
+    setActionsDisabled(true);
+    try {
+      const response = await fetch('/search/jobs/' + encodeURIComponent(actions.dataset.jobId) + '/state', {
+        method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},
+        body:JSON.stringify({status:pending})
+      });
+      if (response.ok) { location.reload(); return; }
+      actions.querySelector('.state-error').textContent = response.status === 409 ? '正在搜索，请等待。' : '状态保存失败，请刷新后重试。';
+    } catch { actions.querySelector('.state-error').textContent = '状态保存失败，请刷新后重试。'; }
+    pending = null;
+    confirmation.hidden = true;
+  });
+});
 async function poll() {
   try {
     const response = await fetch('/search/run/status', {cache:'no-store'});
     if (!response.ok) throw new Error();
     const run = await response.json();
     button.disabled = run.status === 'running';
+    setActionsDisabled(run.status === 'running');
     button.textContent = run.status === 'running' ? '正在搜索' : '开始增量搜索';
     document.getElementById('state').textContent = ({idle:'尚未开始',running:'正在搜索',succeeded:'搜索成功',failed:'搜索失败'})[run.status];
     document.getElementById('time').textContent = run.started_at ? `开始：${run.started_at}；已运行：${run.elapsed_seconds} 秒；结束：${run.finished_at || '—'}` : '';
@@ -38,13 +115,14 @@ async function poll() {
     if (run.safe_reason) document.getElementById('error').textContent += ` source：${run.failed_source || '—'}；page：${run.failed_page || '—'}；safe_reason：${run.safe_reason}`;
     if (previous === 'running' && run.status !== 'running') { location.reload(); return; }
     previous = run.status;
-  } catch { document.getElementById('state').textContent = '状态读取失败，请刷新页面。'; button.disabled = true; }
+  } catch { document.getElementById('state').textContent = '状态读取失败，请刷新页面。'; button.disabled = true; setActionsDisabled(true); }
   setTimeout(poll, 1500);
 }
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (!SearchConfig.save(form, configLimits)) { document.getElementById('error').textContent = '请选择 source 并检查整数范围。'; return; }
   button.disabled = true;
+  setActionsDisabled(true);
   const data = {sources: [...form.querySelectorAll('[name=sources]:checked')].map(input => input.value)};
   for (const input of form.querySelectorAll('[type=number]')) data[input.name] = Number(input.value);
   try {
