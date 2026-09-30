@@ -259,7 +259,8 @@ def test_codex_batch_compact_mocked_executor(monkeypatch):
 def test_incomplete_batch_not_saved(store):
     model = Mock()
     model.classify_jobs.return_value = {}
-    with pytest.raises(ValueError):
+    from scout_agent.llm.codex import CodexClassifierError
+    with pytest.raises(CodexClassifierError):
         run_search(FakeGreen({('AWS', 1): [job()]}), store, model, keywords=['AWS'])
     assert store.current_results() == []
 
@@ -300,3 +301,109 @@ def test_sparse_keywords_share_one_batch(store):
 
 def test_monthly_salary_not_annual_ceiling():
     assert detail_drop({'salary': '月給 30〜40万円'}) is None
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('年収 400〜800万円', (4000000, 8000000)),
+    ('500万円～900万円', (5000000, 9000000)),
+    ('年俸 400万円', (4000000, 4000000)),
+    ('年収 上限 449万円', (None, 4490000)),
+    ('月給 30〜40万円', (None, None)),
+    ('時給 2000円', (None, None)),
+    ('年収 400万円以上', (None, None)),
+    ('年収 500万円 / 月給 40万円', (None, None)),
+    ('年収 800〜400万円', (None, None)),
+])
+def test_structured_annual_salary(text, expected):
+    from scout_agent.search import parse_annual_salary
+    assert parse_annual_salary(text) == expected
+
+
+def test_search_metadata_round_trip(store):
+    model = FakeCodex()
+    model.model_name = 'fictional-codex-model'
+    run_search(FakeGreen({('AWS', 1): [job(), job(2, salary='年収 400万円')]}),
+               store, model, keywords=['AWS'])
+    rows = store.conn.execute('SELECT * FROM search_evaluations ORDER BY job_id').fetchall()
+    assert [(r['provider'], r['model_name']) for r in rows] == [
+        ('codex', 'fictional-codex-model'), ('local', 'local-rule')]
+    from datetime import datetime
+    assert all(datetime.fromisoformat(r['evaluated_at']).utcoffset().total_seconds() == 0 for r in rows)
+    row = store.conn.execute('SELECT salary_min,salary_max FROM search_jobs WHERE job_id=?', (job().job_id,)).fetchone()
+    assert tuple(row) == (5000000, 8000000)
+    assert len(store.current_results()) == 2
+
+
+def test_existing_search_schema_migration(tmp_path):
+    with Database(tmp_path / 'fictional-legacy.db') as db:
+        db.conn.executescript('''
+            CREATE TABLE search_jobs(job_id TEXT PRIMARY KEY, source_kind TEXT DEFAULT 'search',
+              url TEXT, payload TEXT, keywords TEXT);
+            CREATE TABLE search_evaluations(job_id TEXT,content_hash TEXT,policy_version TEXT,
+              payload TEXT,provider TEXT,PRIMARY KEY(job_id,content_hash,policy_version));
+        ''')
+        j = job()
+        result = SearchEvaluation(verdict='POSSIBLE', summary='待人工判断。')
+        db.conn.execute('INSERT INTO search_jobs VALUES(?,?,?,?,?)',
+                        (j.job_id, 'search', j.url, json.dumps(j.fields), '[]'))
+        db.conn.execute('INSERT INTO search_evaluations VALUES(?,?,?,?,?)',
+                        (j.job_id, content_hash(j.fields), 'old', result.model_dump_json(), 'codex'))
+        db.conn.commit()
+        store = SearchStore(db)
+        SearchStore(db)  # Idempotent migration.
+        assert store.cached(j, 'old') == result
+        row = db.conn.execute('SELECT model_name,evaluated_at FROM search_evaluations').fetchone()
+        assert tuple(row) == (None, None)
+        assert tuple(db.conn.execute('SELECT salary_min,salary_max FROM search_jobs').fetchone()) == (5000000, 8000000)
+        store.save_result(j, 'new', result, 'codex', 'fictional-new-model')
+        assert store.cached(j, 'new') == result
+
+
+@pytest.mark.parametrize('failure', ['quota', 'auth', 'invalid_batch', 'invalid_json', 'timeout'])
+def test_search_cli_model_failure_resumable(tmp_path, monkeypatch, capsys, failure):
+    from contextlib import contextmanager
+    from scout_agent.search import search_command
+    from scout_agent.llm.codex import CodexClassifierError
+    adapter = FakeGreen({('AWS', 1): [job(1, salary='年収 400万円'), job(2), job(3)]})
+    adapter.ensure_verified = lambda: None
+    page = Mock()
+    session = SimpleNamespace(contexts=[SimpleNamespace(new_page=lambda: page)])
+    @contextmanager
+    def fake_open(self):
+        yield session
+    monkeypatch.setattr('scout_agent.browser.manager.BrowserManager.open', fake_open)
+    calls = []
+    def classify(self, jobs):
+        calls.append(jobs)
+        if len(calls) == 1:
+            return {j.job_id: SearchEvaluation(verdict='POSSIBLE', summary='待人工判断。') for j in jobs}
+        if failure == 'invalid_batch':
+            return {}
+        raise CodexClassifierError('PRIVATE JD RAW STDERR', category=failure, stderr='PRIVATE JD RAW STDERR')
+    monkeypatch.setattr(SearchCodex, 'classify_jobs', classify)
+    settings = SimpleNamespace(browser_mode='cdp', profile_path=tmp_path / 'unused',
+        cdp_endpoint='http://fictional.invalid', db_path=tmp_path / 'fictional.db',
+        output_path=tmp_path / 'unused-reports', codex_model='fictional-model', codex_batch_size=1)
+    args = SimpleNamespace(keyword=['AWS'], max_jobs=30, max_model_jobs=20, pages_per_keyword=2)
+    assert search_command(args, settings, adapter=adapter) == 1
+    output = capsys.readouterr()
+    assert '下次续跑' in output.err
+    assert 'PRIVATE' not in output.err and 'Traceback' not in output.err
+    page.close.assert_called_once()
+    assert not settings.output_path.exists()
+    with Database(settings.db_path) as db:
+        store = SearchStore(db)
+        assert len(store.current_results()) == 2
+        assert store.cached(job(3), 'green-search-0.1.1') is None
+        _, stats, _, _ = run(store, [job(1, salary='年収 400万円'), job(2), job(3)])
+        assert stats['cache_hits'] == 2 and stats['model_jobs'] == 1
+
+
+@pytest.mark.parametrize('output', ['broken JSON', '[{}]', '[]'])
+def test_search_codex_invalid_response_safe(output):
+    from scout_agent.llm.codex import CodexClassifierError
+    model = SearchCodex('fictional-model', 'fictional-policy', 'low')
+    model._run_codex = Mock(return_value=output)
+    with pytest.raises(CodexClassifierError) as error:
+        model.classify_jobs([job()])
+    assert error.value.category == 'invalid_json'

@@ -5,11 +5,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from scout_agent.llm.codex import CodexClassifier, CodexClassifierError, _clean_json_output
 from scout_agent.llm.base import validate_explanations
@@ -80,15 +81,27 @@ def list_drop(title: str) -> bool:
     return bool(re.search(r'frontend|フロントエンド|ios|android|designer|デザイナー|sales|営業|\bHR\b|人事|marketing|マーケティング|QA.only|helpdesk|ヘルプデスク|純粋なバックエンド|backend.only', title, re.I))
 
 
+def parse_annual_salary(text: str) -> tuple[int | None, int | None]:
+    """Confirmed annual amounts in JPY; mixed monthly/hourly text stays unknown."""
+    text = text.replace(',', '').replace('，', '').strip()
+    if re.search(r'月給|月収|時給', text):
+        return None, None
+    match = re.fullmatch(r'(?:年収|年收|年俸)?\s*(\d+)\s*(?:万円)?\s*[〜～~\-–]\s*(\d+)\s*万円', text)
+    if match:
+        low, high = int(match[1]) * 10000, int(match[2]) * 10000
+        return (low, high) if low <= high else (None, None)
+    upper = re.fullmatch(r'(?:年収|年收|年俸)?\s*(?:上限|最大)\s*(\d+)\s*万円', text)
+    if upper:
+        return None, int(upper[1]) * 10000
+    fixed = re.fullmatch(r'(?:年収|年收|年俸)\s*(\d+)\s*万円', text)
+    if fixed:
+        return int(fixed[1]) * 10000, int(fixed[1]) * 10000
+    return None, None
+
+
 def detail_drop(fields: dict[str, str]) -> str | None:
-    salary = fields.get('salary', '').replace(',', '').replace('，', '')
-    if re.search(r'月給|月収|時給', salary) and not re.search(r'年収|年俸|年收', salary):
-        salary = ''  # Monthly/hourly amounts are not an annual salary ceiling.
-    # Only explicit annual ranges/upper limits; never infer a maximum from a minimum.
-    match = re.search(r'(\d+)\s*(?:万円)?\s*[〜～~\-–]\s*(\d+)\s*万円', salary)
-    upper = re.search(r'(?:上限|最大)\s*(\d+)\s*万円', salary)
-    fixed = re.fullmatch(r'(?:年収|年收|年俸)\s*(\d+)\s*万円', salary.strip())
-    if (match and int(match[2]) < 450) or (upper and int(upper[1]) < 450) or (fixed and int(fixed[1]) < 450):
+    _, salary_max = parse_annual_salary(fields.get('salary', ''))
+    if salary_max is not None and salary_max < 4500000:
         return '明确年收上限低于 450 万円。'
     duties = fields.get('responsibilities', '')
     # Narrow affirmative statements avoid negations, company history and tech lists.
@@ -116,14 +129,28 @@ class SearchStore:
           payload TEXT NOT NULL, provider TEXT NOT NULL,
           PRIMARY KEY(job_id, content_hash, policy_version));
         ''')
+        # Additive migration also handles the previously shipped Search schema.
+        for table, columns in {
+            'search_jobs': {'salary_min': 'INTEGER', 'salary_max': 'INTEGER'},
+            'search_evaluations': {'model_name': 'TEXT', 'evaluated_at': 'TEXT'},
+        }.items():
+            existing = {row[1] for row in self.conn.execute(f'PRAGMA table_info({table})')}
+            for name, kind in columns.items():
+                if name not in existing:
+                    self.conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {kind}')
+        # Historical model/time are unknown: never invent them during migration.
+        for row in self.conn.execute('SELECT job_id,payload FROM search_jobs').fetchall():
+            low, high = parse_annual_salary(json.loads(row['payload']).get('salary', ''))
+            self.conn.execute('UPDATE search_jobs SET salary_min=?,salary_max=? WHERE job_id=?',
+                              (low, high, row['job_id']))
         self.conn.commit()
 
     def save_job(self, job):
         old = self.conn.execute('SELECT keywords FROM search_jobs WHERE job_id=?', (job.job_id,)).fetchone()
         keywords = sorted(set(job.matched_keywords + (json.loads(old[0]) if old else [])))
         job.matched_keywords = keywords
-        self.conn.execute('INSERT INTO search_jobs(job_id,url,payload,keywords) VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET url=excluded.url,payload=excluded.payload,keywords=excluded.keywords',
-                          (job.job_id, job.url, json.dumps(compact_jd(job.fields), ensure_ascii=False), json.dumps(keywords, ensure_ascii=False)))
+        self.conn.execute('INSERT INTO search_jobs(job_id,url,payload,keywords,salary_min,salary_max) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET url=excluded.url,payload=excluded.payload,keywords=excluded.keywords,salary_min=excluded.salary_min,salary_max=excluded.salary_max',
+                          (job.job_id, job.url, json.dumps(compact_jd(job.fields), ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), *parse_annual_salary(job.fields.get('salary', ''))))
         self.conn.commit()
 
     def cached(self, job, policy):
@@ -131,9 +158,11 @@ class SearchStore:
                                 (job.job_id, content_hash(job.fields), policy)).fetchone()
         return SearchEvaluation.model_validate_json(row[0]) if row else None
 
-    def save_result(self, job, policy, result, provider):
-        self.conn.execute('INSERT OR IGNORE INTO search_evaluations VALUES(?,?,?,?,?)',
-                          (job.job_id, content_hash(job.fields), policy, result.model_dump_json(), provider))
+    def save_result(self, job, policy, result, provider, model_name=None):
+        self.conn.execute('INSERT OR IGNORE INTO search_evaluations(job_id,content_hash,policy_version,payload,provider,model_name,evaluated_at) VALUES(?,?,?,?,?,?,?)',
+                          (job.job_id, content_hash(job.fields), policy, result.model_dump_json(), provider,
+                           model_name or ('local-rule' if provider == 'local' else None),
+                           datetime.now(timezone.utc).isoformat()))
         self.conn.commit()
 
     def current_results(self, policy=POLICY_VERSION):
@@ -148,6 +177,12 @@ class SearchStore:
 
 class SearchCodex(CodexClassifier):
     def classify_jobs(self, jobs):
+        try:
+            return self._classify_jobs(jobs)
+        except (ValueError, KeyError, TypeError):
+            raise CodexClassifierError('Search 批量结果无效，未保存。', category='invalid_json') from None
+
+    def _classify_jobs(self, jobs):
         records = [{'job_id': job.job_id, 'jd': compact_jd(job.fields)} for job in jobs]
         prompt = (RULES + '\nReturn ONLY a JSON array of {"job_id": input ID, "evaluation": '
                   '{"verdict":"TARGET|POSSIBLE|DROP","summary":"简体中文","reasons":[],"concerns":[]}}. '
@@ -177,7 +212,8 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
     seen, results, pending = {}, {}, []
 
     def accept(job, result, provider):
-        store.save_result(job, policy_version, result, provider)
+        store.save_result(job, policy_version, result, provider,
+                          getattr(classifier, 'model_name', None) if provider == 'codex' else 'local-rule')
         results[job.job_id] = (job, result)
         stats[result.verdict] += 1
 
@@ -186,8 +222,12 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
             return
         batch = list(pending)
         output = classifier.classify_jobs(batch)
-        if set(output) != {j.job_id for j in batch}:
-            raise ValueError('Search 批量结果不完整，未保存。')
+        if not isinstance(output, dict) or set(output) != {j.job_id for j in batch}:
+            raise CodexClassifierError('Search 批量结果不完整，未保存。', category='invalid_json')
+        try:
+            output = {key: SearchEvaluation.model_validate(value) for key, value in output.items()}
+        except ValidationError:
+            raise CodexClassifierError('Search 批量结果无效，未保存。', category='invalid_json') from None
         stats['batches'] += 1
         stats['model_jobs'] += len(batch)
         for job in batch:
@@ -354,11 +394,18 @@ def search_command(args, settings, *, adapter=None):
         try:
             adapter.page = page
             with Database(settings.db_path) as db:
-                results, stats = run_search(adapter, SearchStore(db),
-                    SearchCodex(settings.codex_model, RULES, 'low'),
-                    keywords=args.keyword or KEYWORDS, max_jobs=args.max_jobs,
-                    max_model_jobs=args.max_model_jobs, batch_size=settings.codex_batch_size,
-                    pages_per_keyword=args.pages_per_keyword)
+                try:
+                    results, stats = run_search(adapter, SearchStore(db),
+                        SearchCodex(settings.codex_model, RULES, 'low'),
+                        keywords=args.keyword or KEYWORDS, max_jobs=args.max_jobs,
+                        max_model_jobs=args.max_model_jobs, batch_size=settings.codex_batch_size,
+                        pages_per_keyword=args.pages_per_keyword)
+                except CodexClassifierError:
+                    import sys
+                    print('Codex 模型判断失败（可能为配额、认证、超时或返回格式问题）。'
+                          '已成功的缓存、本地及模型结果保留；失败批次未保存。'
+                          '剩余候选可下次续跑。', file=sys.stderr)
+                    return 1
                 paths = generate_search_report(settings.output_path, results, stats)
         finally:
             page.close()
