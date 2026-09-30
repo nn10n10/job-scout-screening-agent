@@ -297,3 +297,72 @@ worktree 会保留供 review/失败排查。APPROVED 后可从主 checkout 用 `
 - `codex exec --help`：exit 0，再次确认当前 invocation 所用 flags，唯一 warning 为 PATH aliases 创建失败（Read-only file system）；无模型调用，运行时隔离尚未在真实任务中验证。
 - subagent：not run（工具不可用，按任务要求自行验证）。真实浏览器、真实数据库、招聘网站、网络、付费模型访问：none。gh/git/codex 单测调用均 mock。
 - 未 commit/push/merge、变更分支或发送 GitHub 消息。下一步外层 bridge 恢复历史新增临时文件 staging，并在支持 TestClient 的环境独立验证；全部通过后更新现有 agent/issue-1 / PR #2。
+
+### Green Search V0.1（TASK-002）
+
+```bash
+python -m scout_agent search green --max-jobs 30 --max-model-jobs 20
+python -m scout_agent search --help
+```
+
+主动搜索候选池与 Scout 筛选分开：Search 使用 `source_kind=search` 的独立
+`search_jobs` / `search_evaluations` SQLite 表，不更新已有 Scout 或 Codex Evaluation。
+默认关键词：AWS、クラウドエンジニア、SRE、DevOps、Platform Engineer、インフラエンジニア。
+可重复传入 `--keyword`；`--pages-per-keyword` 默认 2。最多读取 30 个独立职位详情，
+最多送 20 个职位给 Codex，复用 `CODEX_BATCH_SIZE`（默认 8），固定 low reasoning。
+TARGET + POSSIBLE 达到 15 时可提前停止（批次边界可能略超出阈值）。
+
+漏斗顺序为列表本地排除 → 结构化 JD → 内容/策略缓存 → 详情 hard rule → Codex batch。
+缓存命中无需重复本地或模型判断；首次运行详情 hard rule 仍在模型之前执行。
+明显无关标题、明确年收上限低于 450 万、明确以 SES/客先常驻为主、纯 Helpdesk/监控
+或明确纯应用开发可零 token 排除。模糊 Infra/IT/社内SE 保守进入详情；
+Kubernetes/EKS 或 ArgoCD/Istio/observability 缺口不单独导致 DROP。
+Remote 等未提供字段显示 UNKNOWN。无法确定的职责/条件保留 POSSIBLE；
+TARGET 必须有主要基础设施职责证据。模型预算耗尽的职位保持待处理，不伪造评价。
+
+紧凑 JD 仅包含公司、职位、年收、地点/Remote、主职责、必須、歓迎、技术；
+模型不接收整页 HTML、导航/footer 或重复字段行。全局按公司 ID + job ID 去重，
+合并实际遇到的 matched keywords。按 stable job ID + content_hash + policy_version
+永久保留历史缓存，仅 JD 内容或策略版本改变时重新评价。
+报告与 Web UI `/search` 默认展示 TARGET + POSSIBLE，DROP 仅计数。
+最终统计包括原始卡片、独立职位、本地排除、缓存、送模型职位、批次及各分类数量。
+
+**当前生产安全门仍关闭**：仓库只确认 `/search`、`?page=N`、职位 URL 形态，
+以及 Green Scout 中已观察到的职位详情 `仕事内容` / `h1` DOM。
+关键词查询方法、搜索列表卡片字段尚无真实 DOM 证据。命令当前返回退出码 2，
+在读取 `.env`、连接 CDP、创建数据库、模型调用和生成报告之前安全失败。
+未实现猜测性的搜索参数或 click selector；自动测试的 fake Green 不代表真实站点验证。
+最小剩余步骤：在用户已登录 Chrome 中只读检查 `/search` 的关键词查询方式，
+确认职位链接及标题/公司/年收/地点字段的 DOM，去标识化记录后补充只读
+`search_cards(keyword, page)` locator/parser 并开启 `ensure_verified()` 安全门。
+详情解析独立函数也需首次真实只读确认其字段完整性；解析不了主职责必须停止。
+只允许 CDP，不自动 fallback 到 persistent Chromium。禁止応募、気になる、面谈、收藏、
+消息、账号设置、上传或自动応募。此版本不支持其他平台主动搜索。
+
+虚构 50 卡片回归样例：25 个列表排除、10 个详情排除、15 个进入 Codex，
+批次为 8 + 7；重复运行 25 个详情缓存命中、0 个送模型、0 次模型批次。
+这些是 fictional mocks 的结果，不是 live Green 验证或模型 quota 使用记录。
+
+TASK-002 开发验证记录（仅 fictional fixtures / mocks）：使用
+`/home/zmang/scoutfilter/scout-agent/.venv/bin/python`，未访问真实浏览器、真实数据库、
+招聘网站或付费模型，未提交、push 或修改分支。当前沙箱下普通 pytest 在 TestClient
+线程事件循环唤醒处挂起，手动终止退出码 130；没有得到普通运行的完成 summary。
+为完成同一套断言，仅在忽略目录 `.bridge-tmp/sandbox_loop.py` 中加入 pytest 插件，
+将 `selectors.DefaultSelector.select()` 的等待上限设为 0.01 秒；不修改应用代码或网络权限。
+插件不进入提交，bridge 的普通环境应独立运行标准 `python -m pytest`。
+
+实际完成命令（cwd 为本临时 worktree；设置 `TMPDIR` 与 pytest basetemp 保证临时写入在 worktree 内）：
+
+```bash
+TMPDIR="$PWD/.bridge-tmp/tmp" PYTHONPATH="$PWD/.bridge-tmp:$PWD" /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest -q -p sandbox_loop --basetemp=.bridge-tmp/full-test
+TMPDIR="$PWD/.bridge-tmp/tmp" PYTHONPATH="$PWD/.bridge-tmp:$PWD" /home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest tests/test_search.py -q -s -p sandbox_loop --basetemp=.bridge-tmp/search-final
+git diff --check
+/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent search --help
+```
+
+结果：全量 `464 passed, 1 warning`；专项 `53 passed, 1 warning`；四条命令退出码均为 0。
+警告为 `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead`。
+无 failed / skipped / xfailed。专项文件 `tests/test_search.py` 包括去重、本地漏斗、
+JD/策略缓存变化、批量与预算、early-stop、报告/Web UI、旧数据库迁移和 Scout 评价保护、
+只读详情动作、生产安全失败等。CLI smoke 输出确认仅支持 Green，详情默认上限 30、
+Codex 默认预算 20、每关键词默认 2 页；真实搜索命令尚不能完成，因为上述 DOM 证据待验证。

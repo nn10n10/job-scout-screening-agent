@@ -59,3 +59,18 @@ def job_detail(request: Request, scout_id: int) -> HTMLResponse:
         context={"job": evaluation_detail(result)},
         headers=PRIVATE_HEADERS,
     )
+
+
+@router.get("/search", response_class=HTMLResponse)
+def search_pool(request: Request) -> HTMLResponse:
+    from scout_agent.search import SearchStore, render_search
+    from scout_agent.storage.db import Database
+    # Do not migrate from a GET route; old databases simply have no search pool.
+    if not request.app.state.db_path.exists():
+        results = []
+    else:
+        with Database(request.app.state.db_path, read_only=True) as db:
+            exists = db.conn.execute("SELECT 1 FROM sqlite_master WHERE name='search_jobs'").fetchone()
+            store = SearchStore(db, migrate=False)
+            results = store.current_results() if exists else []
+    return HTMLResponse(render_search(results), headers=PRIVATE_HEADERS)
