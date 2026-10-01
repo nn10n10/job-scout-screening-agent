@@ -55,29 +55,51 @@ UI 增加平台 badge 和动态外链文案；当前仍只执行 Green，未添�
 配置持久化测试，并完成两页列表、少量详情、缓存 pipeline 的授权 live 验证。
 本轮没有新平台解析器，也没有新平台 live 或付费模型验证，不能宣称已交付第二平台。
 
-## 本轮验证证据
+## 手动 platform discovery probe
 
-由主 Agent 自行验证（当前没有 subagent 工具）。Python 为
-`/home/zmang/scoutfilter/scout-agent/.venv/bin/python`，下列命令中的 `$PY` 表示此路径。
+这是基础设施准备；第二平台仍待 live DOM 证据，TASK-007 未完成。
+Bridge 不访问真实浏览器。用户在本机已登录 Chrome 中手动打开六个平台的
+搜索结果页，然后在自己的终端运行：
 
-- `$PY -m pytest -q --basetemp=pytest-of-local tests/test_search_platforms.py tests/test_search.py tests/test_search_coverage.py tests/test_green_search_discovery.py -k 'not report_and_web_drop_count_only and not old_web_database_no_search_migration and not old_database_and_scout_preservation'`
-  退出码 0；`193 passed, 3 deselected, 1 warning in 3.20s`。
-  新测试覆盖身份隔离、非法身份、Green URL/ID 一致性、旧表无迁移读取、
-  缓存保留、APPLIED/EXCLUDED 在迁移和重扫后保留、funnel cursor 隔离。
-- `$PY -m pytest -q --basetemp=pytest-of-local tests/test_search_user_state.py::test_confirmation_and_responsive_contract tests/test_search_user_state.py::test_confirmation_clicks_with_fake_dom tests/test_web_search.py::test_exception_releases_busy tests/test_web_search.py::test_cli_runner_no_shell tests/test_web_search.py::test_pool_url_strip_query`
-  退出码 0；`5 passed, 1 warning in 0.36s`。
-- 两组 warning 均为 `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.` 无 failed/skipped/xfailed。
-- `timeout 60s $PY -m pytest -q -o faulthandler_timeout=15`
-  退出码 124，没有最终 pytest summary。诊断栈停在
-  `tests/test_search.py:159 test_report_and_web_drop_count_only` 的
-  `starlette.testclient.TestClient.__enter__`，AnyIO portal 线程等待。
-  扩展 focused 组也遇到相同问题；另一个既有
-  `test_old_database_and_scout_preservation` 的 TestClient 同样等待。
-  不将排除后的回归结果视为 full pytest 通过；GET/API 的完整集成验证仍未完成。
-- `git diff --check` 与 `git diff --cached --check` 退出码均 0，无输出；未暂存文件。
-- `$PY -m scout_agent search --help` 退出码 0；关键输出为 `{green}`、
-  `仅支持 Green`、`CDP 只读结构检查：0 模型调用、无数据库/报告`。
+```bash
+python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222
+```
 
-真实浏览器、真实数据库、招聘网站、付费模型访问：none。live 验证：not run。
-所有已执行模型测试均使用 mock，数据库均为 fictional fixtures。
-未执行 commit/push/PR 或修改 git metadata；后续由 Bridge review 和验证。
+默认顺序为 Forkwell / Findy / LAPRAS / type / doda / マイナビ転職。
+可重复使用 `--platform type --platform doda` 缩小范围。
+输出仅到 stdout；若保存，应重定向到本地临时文件，不提交仓库。
+退出码 0 表示每个已检查页面都有候选链接证据；1 表示存在安全失败分类，
+不代表平台不可适配，也不代表任何 selector 已获验证。
+
+probe 仅连接本机 CDP，读取既有标签页，不新建页面、不导航、不点击、
+不刷新、不关闭用户页面、不登录、不启动 persistent Chromium。
+仅允许源码 PLATFORMS 中的六组固定 HTTPS 域名，其他标签页不执行读取。
+用户必须自行打开搜索结果页；缺少标签页输出 NO_OPEN_TAB。
+只使用通用 DOM 结构读取，不推断平台专用 selector。
+
+输出包括脱敏 route/path、分页参数候选、候选 job link pattern、数字路径 ID 候选、
+固定白名单中的可见 section heading/字段标签、readyState、busy 和 SPA marker。
+路径中的任意文本都替换为 :segment，数字替换为 :id；不输出 query 值、
+fragment、真实 ID、链接文本、公司名、个人资料、JD 正文、cookie 或 token。
+候选链接仅依据通用 job/jobs/detail 路径词汇，未知模式不猜测。
+分页与 SPA 都只是单次快照候选；不能证明分页可用、稳定 ID 或 SPA 行为。
+页面变化、读取失败、登录表单、加载中分别输出安全分类；不输出原始异常。
+
+用户本机运行后，根据脱敏结果决定后续人工 DOM 调查与第 2 平台实现，
+仍需补充真实结构证据及专用 adapter 测试。本轮不实现第二平台 selector。
+
+## 验证记录说明
+
+上一轮 Bridge 报告 643 passed，属于历史验证记录，不是本轮 probe 的验证。
+旧的开发阶段 timeout 记录已移除，避免与 Bridge 最终结果混淆。
+本轮验证命令及结果见交付摘要；真实浏览器/数据库/招聘网站/付费模型均未访问。
+
+本轮主 Agent 验证（无可用 subagent）：
+- `/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest -q --basetemp=.pytest-probe-tmp tests/test_platform_discovery.py tests/test_search_platforms.py tests/test_green_search_discovery.py`
+  退出码 0，`129 passed in 0.66s`；failed/skipped/xfailed/warnings：none。
+  probe focused tests 覆盖固定域名、脱敏、安全失败分类、页面变化、只读调用、
+  endpoint 校验及 mocked CDP 命令入口。临时测试文件已清理。
+- 同一 Python 执行 `-m scout_agent.platform_discovery --help`，退出码 0；
+  显示六平台选项及“不导航、不登录、0 模型调用”。
+- `git diff --check` 退出码 0，无输出。
+- live 与真实数据库验证：not run；真实浏览器/招聘网站/付费模型访问：none。
