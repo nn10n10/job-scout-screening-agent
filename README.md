@@ -2,6 +2,14 @@
 
 这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell、LAPRAS 等网页适配器尚未实现。不会自动登录、応募或发送消息。
 
+Forkwell 主动 Search 仍处于结构调查阶段。手动打开搜索结果页及一个职位详情页后，可运行
+`python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform forkwell`。
+该 probe 只读取既有标签页，不导航、点击或刷新。JSON 包含 `page_kind` 候选、职位链接数量和脱敏路径、
+分页路径与固定 query-key（`page`、`p`、`cursor`、`offset`）、next/prev/page-number 候选、
+详情页 canonical 路径模式与 stable-ID segment 位置（从 1 开始，忽略空 segment），以及固定字段标题命中。
+不输出真实 ID、公司名、正文或 query value；登录失效仍返回 `NEEDS_LOGIN`。
+这些都是候选证据：数字路径不保证 ID 稳定性，暂不推测 selector，也未实现 Forkwell Search adapter。
+
 ## 架构
 
 `PlatformAdapter → Scout → SQLite 去重 → Mock/Codex/Gemini Classifier → Evaluation → HTML/JSON 报告`。

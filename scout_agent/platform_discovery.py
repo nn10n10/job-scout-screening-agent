@@ -20,7 +20,8 @@ SEGMENTS = frozenset({'jobs', 'job', 'search', '求人', 'companies', 'company',
 LABELS = frozenset({'仕事内容', '応募資格', '必須要件', '歓迎要件', '給与', '勤務地',
                     '勤務時間', '雇用形態', '福利厚生', '開発環境', '技術', '検索結果',
                     '求人検索', '募集要項', 'リモート', '年収'})
-# No body text, anchor text, profile data, cookies or storage are read.
+PAGINATION_KEYS = frozenset({'page', 'p', 'cursor', 'offset'})
+# Only fixed labels/anchor markers leave the DOM; no body, profile or storage read.
 SNAPSHOT = """() => {
  const visible = e => !!(e.getClientRects().length) && getComputedStyle(e).visibility !== 'hidden';
  const login = Array.from(document.querySelectorAll('input[type="password"],form[action],h1,h2,button,[role="button"]'))
@@ -30,6 +31,17 @@ SNAPSHOT = """() => {
  if (login) return {login: true};
  const labels = %s;
  return {
+   canonical: document.querySelector('link[rel="canonical"]')?.href || null,
+   pagination: Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 2000)
+     .map(e => {
+       const rel = (e.getAttribute('rel') || '').split(/\\s+/);
+       const label = (e.textContent || '').trim();
+       const kind = rel.includes('next') ? 'next' : rel.includes('prev') ? 'prev' :
+         /^(?:次へ|次のページ|Next|›|»)$/.test(label) ? 'next' :
+         /^(?:前へ|前のページ|Previous|Prev|‹|«)$/.test(label) ? 'prev' :
+         /^\\d+$/.test(label) ? 'page-number' : null;
+       return kind ? {url: e.href, kind} : null;
+     }).filter(Boolean),
    links: Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 2000).map(e => e.href),
    labels: Array.from(document.querySelectorAll('h1,h2,h3,h4,dt,label,th')).filter(visible)
      .map(e => (e.textContent || '').trim()).filter(t => labels.includes(t)),
@@ -114,10 +126,54 @@ def evidence(platform, url, snapshot):
         busy=snapshot.get('busy') is True,
         spa_marker_present=snapshot.get('spa') is True,
     )
+    if platform == 'forkwell':
+        result.update(forkwell_evidence(url, snapshot, links))
     if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
-    elif not candidates:
+    elif not candidates and result.get('page_kind') != 'detail':
         result['safe_failure_category'] = 'NO_JOB_LINK_EVIDENCE'
+    return result
+
+
+def forkwell_id_segment(url):
+    """One-based nonempty segment position, restricted to observed job routes."""
+    parts = [part for part in urlsplit(url).path.split('/') if part]
+    if (len(parts) in {2, 3} and parts[-2] == 'jobs'
+            and re.fullmatch(r'[0-9]+', parts[-1])):
+        return len(parts)
+    return None
+
+
+def forkwell_evidence(url, snapshot, links):
+    if not isinstance(snapshot.get('pagination', []), list):
+        raise ValueError('Invalid pagination structure')
+    job_links = [link for link in links if forkwell_id_segment(link) is not None]
+    position = forkwell_id_segment(url)
+    result = {'page_kind': 'detail' if position else 'list' if job_links else 'other',
+              'job_link_count': len(job_links),
+              'job_link_patterns': sorted({path_pattern(link) for link in job_links}),
+              'stable_id_path_segment': position,
+              'canonical_url_pattern': None,
+              'pagination_link_patterns': [], 'pagination_query_keys': [],
+              'pagination_candidates': []}
+    canonical = snapshot.get('canonical')
+    if canonical and allowed(canonical, 'forkwell'):
+        # A canonical can support the detail route only if it names the same job.
+        if position and urlsplit(canonical).path.rstrip('/') == urlsplit(url).path.rstrip('/'):
+            result['canonical_url_pattern'] = path_pattern(canonical)
+    pagination = []
+    for item in snapshot.get('pagination', []):
+        if not isinstance(item, dict):
+            continue
+        target = item.get('url')
+        kind = item.get('kind')
+        if kind in {'next', 'prev', 'page-number'} and allowed(target, 'forkwell'):
+            pagination.append((target, kind))
+    # Query parameters alone are weak evidence; only fixed keys may leave the probe.
+    result['pagination_query_keys'] = sorted({key for target in [url, *links, *(t for t, _ in pagination)]
+        for key, _ in parse_qsl(urlsplit(target).query) if key in PAGINATION_KEYS})
+    result['pagination_link_patterns'] = sorted({path_pattern(target) for target, _ in pagination})
+    result['pagination_candidates'] = sorted({kind for _, kind in pagination})
     return result
 
 

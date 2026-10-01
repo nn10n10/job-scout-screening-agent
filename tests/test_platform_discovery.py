@@ -169,3 +169,114 @@ def test_summary_one_status_per_platform_and_login_precedence():
     summary = platform_summary(rows, ['findy', 'type', 'doda', 'lapras'])
     assert [r['status'] for r in summary] == ['NEEDS_LOGIN', 'OK', 'BLOCKED', 'UNSUPPORTED']
     assert '[NEEDS_LOGIN] platform=findy' in summary[0]['message']
+
+
+@pytest.mark.parametrize('path,position', [('/jobs/876543', 2), ('/fictional-company/jobs/876543/', 3)])
+def test_forkwell_detail_without_links(path, position):
+    url = 'https://jobs.forkwell.com' + path
+    row = evidence('forkwell', url + '?token=fictional-secret', {
+        'ready': 'complete', 'canonical': url + '?private=fictional-secret',
+        'labels': ['仕事内容', '開発環境', 'Fictional company JD'],
+    })
+    assert row['page_kind'] == 'detail'
+    assert row['stable_id_path_segment'] == position
+    assert row['canonical_url_pattern'] == row['route_path']
+    assert row['safe_failure_category'] == 'NONE'
+    assert row['visible_section_headings_or_field_labels'] == ['仕事内容', '開発環境']
+    for secret in ['876543', 'fictional', 'token', 'private', 'JD']:
+        assert secret not in json.dumps(row)
+
+
+def test_forkwell_list_pagination_redaction():
+    base = 'https://jobs.forkwell.com'
+    row = evidence('forkwell', base + '/jobs?page=fictional-secret', {
+        'ready': 'complete',
+        'links': [base + '/fictional-company/jobs/876543', base + '/jobs/876544',
+                  base + '/jobs?page=2&fictional-secret=value', 'https://evil.test/jobs/9'],
+        'pagination': [{'url': base + '/jobs?page=2', 'kind': 'next'},
+                       {'url': base + '/jobs?page=1', 'kind': 'prev'},
+                       {'url': base + '/jobs?page=3', 'kind': 'page-number'},
+                       {'url': 'https://evil.test/private', 'kind': 'next'},
+                       {'url': base + '/private', 'kind': 'fictional-secret'}],
+    })
+    assert row['page_kind'] == 'list'
+    assert row['job_link_count'] == 2
+    assert row['job_link_patterns'] == ['/:segment/jobs/:id', '/jobs/:id']
+    assert row['pagination_link_patterns'] == ['/jobs']
+    assert row['pagination_query_keys'] == ['page']
+    assert row['pagination_candidates'] == ['next', 'page-number', 'prev']
+    assert row['stable_id_path_segment'] is None
+    for secret in ['fictional', '876543', '876544', 'evil', 'private', 'value']:
+        assert secret not in json.dumps(row)
+
+
+@pytest.mark.parametrize('canonical', ['https://evil.test/jobs/876543',
+    'https://jobs.forkwell.com/jobs/999', 'http://jobs.forkwell.com/jobs/876543',
+    'https://user:secret@jobs.forkwell.com/jobs/876543'])
+def test_forkwell_canonical_fails_closed(canonical):
+    row = evidence('forkwell', 'https://jobs.forkwell.com/jobs/876543', {
+        'ready': 'complete', 'canonical': canonical})
+    assert row['canonical_url_pattern'] is None
+
+
+@pytest.mark.parametrize('path', ['/jobs', '/jobs/private', '/profile/876543', '/jobs/876543/apply'])
+def test_forkwell_other_is_not_detail(path):
+    row = evidence('forkwell', 'https://jobs.forkwell.com' + path, {'ready': 'complete'})
+    assert row['page_kind'] == 'other'
+    assert row['stable_id_path_segment'] is None
+    assert row['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
+
+
+def test_forkwell_login_discards_structural_evidence():
+    assert evidence('forkwell', 'https://jobs.forkwell.com/jobs/876543', {
+        'login': True, 'canonical': 'https://jobs.forkwell.com/jobs/876543',
+        'pagination': [{'url': 'https://jobs.forkwell.com/jobs?page=2', 'kind': 'next'}],
+    }) == {'platform': 'forkwell', 'safe_failure_category': 'NEEDS_LOGIN'}
+
+
+def test_forkwell_loading_detail_is_not_success():
+    assert evidence('forkwell', 'https://jobs.forkwell.com/jobs/876543', {
+        'ready': 'loading'})['safe_failure_category'] == 'LOADING'
+
+
+def test_snapshot_fictional_dom_pagination_and_label_filtering():
+    import shutil
+    import subprocess
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node unavailable for fictional DOM snapshot verification')
+    script = r'''
+const anchor = (href, text, rel = '') => ({href, textContent: text,
+  getClientRects: () => [1], getAttribute: name => name === 'rel' ? rel : null});
+const anchors = [anchor('https://jobs.forkwell.com/jobs?page=2&token=secret', 'Private company', 'next'),
+  anchor('https://jobs.forkwell.com/jobs?page=1', '前へ'),
+  anchor('https://jobs.forkwell.com/jobs?page=3', '3'),
+  anchor('https://jobs.forkwell.com/profile', 'Private profile')];
+globalThis.getComputedStyle = () => ({visibility: 'visible'});
+globalThis.document = {readyState: 'complete',
+  querySelector: s => s === 'link[rel="canonical"]' ? {href: 'https://jobs.forkwell.com/jobs/876543'} : null,
+  querySelectorAll: s => s === 'a[href]' ? anchors : s === 'h1,h2,h3,h4,dt,label,th' ?
+    [anchor('', '仕事内容'), anchor('', 'Private JD')] : []};
+'''
+    result = subprocess.run([node, '-e', script + '\nconsole.log(JSON.stringify((' + SNAPSHOT + ')()));'],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads(result.stdout)
+    assert [p['kind'] for p in snapshot['pagination']] == ['next', 'prev', 'page-number']
+    assert snapshot['labels'] == ['仕事内容']
+    assert 'Private' not in result.stdout
+    row = evidence('forkwell', 'https://jobs.forkwell.com/jobs/876543', snapshot)
+    assert row['canonical_url_pattern'] == '/jobs/:id'
+    assert 'secret' not in json.dumps(row)
+
+
+def test_forkwell_malformed_snapshot_fails_closed():
+    page = Mock(url='https://jobs.forkwell.com/jobs/876543')
+    page.evaluate.return_value = {'ready': 'complete', 'pagination': 'private-secret'}
+    # Invalid structural entries cannot become evidence or leak their content.
+    row = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['forkwell'])[0]
+    assert row['safe_failure_category'] == 'READ_FAILED'
+    assert 'private-secret' not in json.dumps(row)
+    page.evaluate.return_value = {'ready': 'complete', 'links': 123}
+    assert collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['forkwell']) == [
+        {'platform': 'forkwell', 'safe_failure_category': 'READ_FAILED'}]
