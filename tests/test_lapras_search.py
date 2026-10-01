@@ -131,6 +131,7 @@ def test_detail_fields_and_identity_recheck():
     assert fields['responsibilities'] == '基盤の運用を担当'
     assert fields['required'] == 'Linux'
     assert fields['salary'] == '600〜900万円'
+    a.page.wait_for_timeout.assert_not_called()
     a.page.evaluate.side_effect = [{**snapshot, 'canonical': 'https://lapras.com/jobs/999'}]
     with pytest.raises(GreenSearchDOMPending) as exc: a.job_detail(job)
     assert exc.value.reason == 'JOB_URL_MISMATCH'
@@ -140,7 +141,7 @@ def test_missing_responsibilities_is_not_invented():
     job = job_from_url('/jobs/123', {})
     a = adapter({}, job.url)
     snapshot = {'ready': 'complete', 'canonical': job.url}
-    a.page.evaluate.side_effect = [snapshot, {'title': 'Fictional', 'sections': {'開発環境': 'AWS'}}, snapshot]
+    a.page.evaluate.side_effect = [snapshot] + [{'title': 'Fictional', 'sections': {'開発環境': 'AWS'}}, snapshot] + [snapshot, {'title': 'Fictional', 'sections': {'開発環境': 'AWS'}}, snapshot] * 4
     with pytest.raises(GreenSearchDOMPending) as exc: a.job_detail(job)
     assert exc.value.reason == 'RESPONSIBILITIES_MISSING'
     assert parse_fields({'unknown': 'ignored'}) == {}
@@ -304,7 +305,7 @@ def test_title_required():
     job = job_from_url('/jobs/123', {})
     a = adapter({}, job.url)
     snapshot = {'ready': 'complete', 'canonical': job.url}
-    a.page.evaluate.side_effect = [snapshot, {'title': '', 'sections': {'仕事内容': '架空基盤の運用'}}, snapshot]
+    a.page.evaluate.side_effect = [snapshot] + [{'title': '', 'sections': {'仕事内容': '架空基盤の運用'}}, snapshot] + [snapshot, {'title': '', 'sections': {'仕事内容': '架空基盤の運用'}}, snapshot] * 4
     with pytest.raises(GreenSearchDOMPending) as exc: a.job_detail(job)
     assert exc.value.reason == 'TITLE_MISSING'
 
@@ -317,7 +318,7 @@ def test_web_page_and_safe_lapras_telemetry(tmp_path):
         html = client.get('/search').text
         assert '<option value="lapras">LAPRAS</option>' in html
         assert "lapras: ['求人検索']" in html
-        assert '暂不支持已验证分页' in html
+        assert '分页尚未验证' in html
         assert not (tmp_path / 'fictional.db').exists()  # GET never migrates.
     manager = SearchRunManager(runner=lambda argv, env, emit:
         emit('LAPRAS safety stop: source=求人検索 page=1 category=NO_STABLE_JOB_LINKS') or 1)
@@ -500,10 +501,12 @@ def test_missing_detail_captures_only_safe_structure(title, reason):
     a = adapter({}, job.url)
     snapshot = {'ready': 'complete', 'canonical': job.url}
     raw = unsafe_structure()
-    a.page.evaluate.side_effect = [snapshot, {'title': title, 'sections': {}}, snapshot, raw]
+    a.page.evaluate.side_effect = [snapshot] + [{'title': title, 'sections': {}}, snapshot] + [snapshot, {'title': title, 'sections': {}}, snapshot] * 4 + [raw]
     with pytest.raises(GreenSearchDOMPending) as exc:
         a.job_detail(job)
     assert exc.value.reason == reason
+    assert [call.args for call in a.page.wait_for_timeout.call_args_list] == [(500,)] * 4
+    a.page.goto.assert_called_once()
     assert a.page.evaluate.call_args.args == (STRUCTURE,)
     assert a.last_safe_detail_diagnostic == sanitize(raw)
     encoded = json.dumps(a.last_safe_detail_diagnostic)
@@ -523,8 +526,7 @@ def test_diagnostic_failure_preserves_primary_reason(diagnostic):
     job = job_from_url('/jobs/123', {})
     a = adapter({}, job.url)
     snapshot = {'ready': 'complete', 'canonical': job.url}
-    a.page.evaluate.side_effect = [snapshot, {'title': 'Fictional', 'sections': {}},
-                                   snapshot, diagnostic]
+    a.page.evaluate.side_effect = [snapshot] + [{'title': 'Fictional', 'sections': {}}, snapshot] + [snapshot, {'title': 'Fictional', 'sections': {}}, snapshot] * 4 + [diagnostic]
     with pytest.raises(GreenSearchDOMPending) as exc:
         a.job_detail(job)
     assert exc.value.reason == 'RESPONSIBILITIES_MISSING'
@@ -575,3 +577,53 @@ def test_web_ignores_safe_detail_diagnostic():
     before = manager.snapshot()
     manager._emit('LAPRAS safe detail diagnostic: ' + json.dumps(sanitize(unsafe_structure())))
     assert manager.snapshot() == before
+
+
+def test_detail_readiness_shell_then_ready():
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    snapshot = {'ready': 'complete', 'canonical': job.url}
+    a.page.evaluate.side_effect = [
+        snapshot, {'title': 'Fictional document shell', 'sections': {}}, snapshot,
+        snapshot, {'title': 'Fictional SRE', 'sections': {'仕事内容': '架空基盤運用'}}, snapshot,
+    ]
+    assert a.job_detail(job)['responsibilities'] == '架空基盤運用'
+    a.page.wait_for_timeout.assert_called_once_with(500)
+    a.page.goto.assert_called_once()
+    assert a.last_safe_detail_diagnostic is None
+
+
+@pytest.mark.parametrize('url,snapshot,reason', [
+    ('https://accounts.google.com/signin', {}, 'NEEDS_LOGIN'),
+    ('https://evil.test/jobs/123', {}, 'JOB_URL_MISMATCH'),
+    ('https://lapras.com/jobs/123', {'ready': 'complete', 'canonical': '/jobs/999'}, 'JOB_URL_MISMATCH'),
+    ('https://lapras.com/jobs/123', {'ready': 'complete', 'login': True}, 'NEEDS_LOGIN'),
+    ('https://lapras.com/jobs/123', {'ready': 'complete', 'busy': True}, 'PARSE_ERROR'),
+    ('https://lapras.com/jobs/123', {'ready': 'loading'}, 'PARSE_ERROR'),
+])
+def test_detail_readiness_retry_safety(url, snapshot, reason):
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    initial = {'ready': 'complete', 'canonical': job.url}
+    a.page.evaluate.side_effect = [initial, {'title': 'Shell', 'sections': {}}, initial, snapshot]
+    a.page.wait_for_timeout.side_effect = lambda _: setattr(a.page, 'url', url)
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == reason
+    a.page.wait_for_timeout.assert_called_once_with(500)
+    a.page.goto.assert_called_once()
+    assert a.last_safe_detail_diagnostic is None
+
+
+@pytest.mark.parametrize('detail', [None, {}, {'title': 'Shell', 'sections': None},
+                                      {'title': None, 'sections': {}}])
+def test_detail_malformed_has_no_readiness_retry(detail):
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    a.page.evaluate.side_effect = [{'ready': 'complete', 'canonical': job.url}, detail]
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == 'PARSE_ERROR'
+    a.page.wait_for_timeout.assert_not_called()
+    assert a.page.evaluate.call_count == 2
+    assert a.last_safe_detail_diagnostic is None

@@ -275,21 +275,35 @@ class LaprasSearchAdapter:
         if (redirected.job_id != job.job_id or canonical.job_id != job.job_id
                 or canonical.url != redirected.url):
             self._stop('JOB_URL_MISMATCH', Stage.DETAIL_NAVIGATION)
-        data = self._read(DETAIL, Stage.DETAIL_NAVIGATION)
-        # Recheck after reading; never persist content from an auth/foreign redirect.
-        final_snapshot = self._snapshot(Stage.DETAIL_NAVIGATION)
-        try:
-            final_canonical = job_from_url(final_snapshot.get("canonical"), {})
-        except ValueError:
-            self._stop("JOB_URL_MISMATCH", Stage.DETAIL_NAVIGATION)
-        if final_canonical.url != target:
-            self._stop("JOB_URL_MISMATCH", Stage.DETAIL_NAVIGATION)
-        if job_from_url(self.page.url, {}).job_id != job.job_id:
-            self._stop('JOB_URL_MISMATCH', Stage.DETAIL_NAVIGATION)
-        if (not isinstance(data, dict) or not isinstance(data.get('sections'), dict)
-                or not isinstance(data.get('title'), str)):
-            self._stop('PARSE_ERROR', Stage.DETAIL_RESPONSIBILITIES)
-        fields = parse_fields(data['sections'], data['title'])
+        # Same-page reads only: at most 2 extra seconds for detail rendering.
+        for attempt in range(5):
+            if attempt:
+                self._check_navigation(Stage.DETAIL_NAVIGATION)
+                self.page.wait_for_timeout(500)
+                retry_snapshot = self._snapshot(Stage.DETAIL_NAVIGATION)
+                try:
+                    retry_canonical = job_from_url(retry_snapshot.get('canonical'), {})
+                except ValueError:
+                    self._stop('JOB_URL_MISMATCH', Stage.DETAIL_NAVIGATION)
+                if retry_canonical.url != target:
+                    self._stop('JOB_URL_MISMATCH', Stage.DETAIL_NAVIGATION)
+            data = self._read(DETAIL, Stage.DETAIL_NAVIGATION)
+            if (not isinstance(data, dict) or not isinstance(data.get('sections'), dict)
+                    or not isinstance(data.get('title'), str)):
+                self._stop('PARSE_ERROR', Stage.DETAIL_RESPONSIBILITIES)
+            # Recheck after reading; never persist content from an auth/foreign redirect.
+            final_snapshot = self._snapshot(Stage.DETAIL_NAVIGATION)
+            try:
+                final_canonical = job_from_url(final_snapshot.get("canonical"), {})
+            except ValueError:
+                self._stop("JOB_URL_MISMATCH", Stage.DETAIL_NAVIGATION)
+            if final_canonical.url != target:
+                self._stop("JOB_URL_MISMATCH", Stage.DETAIL_NAVIGATION)
+            if job_from_url(self.page.url, {}).job_id != job.job_id:
+                self._stop('JOB_URL_MISMATCH', Stage.DETAIL_NAVIGATION)
+            fields = parse_fields(data['sections'], data['title'])
+            if fields.get('title') and fields.get('responsibilities'):
+                return fields
         if not fields.get('title'):
             self._capture_safe_detail_diagnostic()
             self._stop('TITLE_MISSING', Stage.DETAIL_TITLE)

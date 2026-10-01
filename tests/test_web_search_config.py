@@ -280,3 +280,39 @@ def test_platform_aware_disabled_paging(value):
     for platform in ['green', 'forkwell']:
         with pytest.raises(ValueError):
             validate_config({'platform': platform, 'coverage_pages': value, 'max_depth': value})
+
+
+def test_paging_fields_visibility_switches_with_platform():
+    import re
+    template = Path('scout_agent/web/templates/search.html').read_text()
+    render = re.search(r'function renderSources\(\) \{.*?\n\}', template, re.S).group()
+    script = r"""
+const assert = require('node:assert/strict');
+const names = ['coverage_pages', 'max_depth'];
+const fields = Object.fromEntries(names.map(n => [n, {hidden:false}]));
+const form = {elements:{platform:{value:'green'}},
+ querySelector:()=>({replaceChildren(){}, append(){}})};
+for (const name of names) form.elements[name] = {
+ value:99, disabled:false, closest(selector) {
+   assert.equal(selector, '.field'); return fields[name];
+ }};
+const configLimits = {coverage_pages:[2],max_depth:[15]};
+const platformSources = {green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索']};
+const note = {hidden:true};
+const document = {getElementById:()=>note, createElement:()=>({append(){}}),
+ createTextNode:value=>value};
+""" + render + r"""
+for (const platform of ['green','lapras','forkwell','lapras','green']) {
+ form.elements.platform.value = platform;
+ renderSources();
+ for (const name of names) {
+   assert.equal(fields[name].hidden, platform === 'lapras');
+   assert.equal(form.elements[name].disabled, platform === 'lapras');
+ }
+ assert.equal(note.hidden, platform !== 'lapras');
+}
+console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
+"""
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'Green/Forkwell restored' in result.stdout

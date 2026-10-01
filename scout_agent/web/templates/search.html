@@ -9,7 +9,7 @@
 <fieldset class="search-sources"><legend>搜索来源</legend><div class="search-source-options">{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source }}</label>{% endfor %}</div></fieldset>
 {% for name,label,help in [('coverage_pages','每轮深页数','每轮每个来源额外扫描多少个深页'),('max_depth','最大扫描页','每个来源扫描的最大页码')] %}<label class="field search-basic">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}
 <button type="button" class="search-advanced-toggle" aria-expanded="false" aria-controls="search-advanced-panel">高级设置</button><div class="search-advanced-panel" id="search-advanced-panel" hidden>{% for name,label,help in [('max_jobs','详情读取上限','本次最多读取多少个职位详情'),('max_model_jobs','AI 评价上限','本次最多评价多少个职位'),('codex_batch_size','Codex 批次大小','仅影响本次搜索，不修改全局配置')] %}<label class="field">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}</div>
-<p id="pagination-note" hidden>LAPRAS 当前只扫描已验证的 /jobs/home 第一页，暂不支持已验证分页。</p>
+<p id="pagination-note" hidden>LAPRAS 当前固定扫描 /jobs/home 第一页，分页尚未验证。</p>
 <button id="start" type="submit" disabled>开始增量搜索</button></form>
 <section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="time"></p><p id="error"></p><pre id="output"></pre></section>
 <h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。优先显示 TARGET / POSSIBLE；未评价职位保留待处理。</p>
@@ -63,6 +63,7 @@ function renderSources() {
   const container = form.querySelector('.search-source-options');
   const singlePage = form.elements.platform.value === 'lapras';
   for (const name of ['coverage_pages', 'max_depth']) {
+    form.elements[name].closest('.field').hidden = singlePage;
     form.elements[name].disabled = singlePage;
     if (singlePage) form.elements[name].value = configLimits[name][0];
   }
