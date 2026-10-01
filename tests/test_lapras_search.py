@@ -53,6 +53,62 @@ def test_list_fail_closed(snapshot, reason):
     assert exc.value.reason == reason
 
 
+def test_list_readiness_second_snapshot_succeeds():
+    a = adapter({})
+    a.page.evaluate.side_effect = [
+        {'ready': 'complete', 'links': ['/jobs/fictional-sre']},
+        {'ready': 'complete', 'links': ['/jobs/123']},
+    ]
+    assert [j.job_id for j in a.search_cards('求人検索', 1)] == ['lapras:123']
+    a.page.goto.assert_called_once()
+    a.page.wait_for_timeout.assert_called_once_with(500)
+    assert a.page.evaluate.call_count == 2
+    assert [call[0] for call in a.page.method_calls] == [
+        'goto', 'evaluate', 'wait_for_timeout', 'evaluate']
+
+
+@pytest.mark.parametrize('links', [[], ['/jobs/fictional-sre']])
+def test_list_readiness_wait_has_hard_limit(links):
+    a = adapter({'links': links})
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.search_cards('求人検索', 1)
+    assert exc.value.reason == 'NO_STABLE_JOB_LINKS'
+    assert a.page.evaluate.call_count == 5
+    assert [call.args for call in a.page.wait_for_timeout.call_args_list] == [(500,)] * 4
+    a.page.goto.assert_called_once()
+
+
+@pytest.mark.parametrize('url,reason', [
+    ('https://accounts.google.com/signin', 'NEEDS_LOGIN'),
+    ('https://evil.test/jobs/home', 'SOURCE_URL_MISMATCH'),
+])
+def test_list_readiness_retry_navigation_fails_closed(url, reason):
+    a = adapter({'links': []})
+    a.page.wait_for_timeout.side_effect = lambda _: setattr(a.page, 'url', url)
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.search_cards('求人検索', 1)
+    assert exc.value.reason == reason
+    assert a.page.evaluate.call_count == 1
+    a.page.wait_for_timeout.assert_called_once_with(500)
+
+
+@pytest.mark.parametrize('snapshot,reason', [
+    (None, 'PARSE_ERROR'),
+    ({'ready': 'complete', 'links': None}, 'PARSE_ERROR'),
+    ({'ready': 'complete', 'busy': True, 'links': []}, 'PARSE_ERROR'),
+    ({'ready': 'loading', 'links': []}, 'PARSE_ERROR'),
+    ({'ready': 'complete', 'login': True, 'links': []}, 'NEEDS_LOGIN'),
+])
+def test_list_readiness_retry_snapshot_fails_closed(snapshot, reason):
+    a = adapter({})
+    a.page.evaluate.side_effect = [{'ready': 'complete', 'links': []}, snapshot]
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.search_cards('求人検索', 1)
+    assert exc.value.reason == reason
+    assert a.page.evaluate.call_count == 2
+    a.page.wait_for_timeout.assert_called_once_with(500)
+
+
 def test_login_redirect_before_read_and_safe_telemetry(capsys):
     a = adapter({}, 'https://accounts.google.com/signin?private=fictional')
     with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('求人検索', 1)

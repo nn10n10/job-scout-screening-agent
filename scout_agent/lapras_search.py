@@ -225,30 +225,34 @@ class LaprasSearchAdapter:
     def search_cards(self, keyword, page):
         target = self.source_url(keyword, page)
         self._navigate(target, Stage.SOURCE_NAVIGATION)
-        snapshot = self._snapshot(Stage.SOURCE_URL)
-        if self.page.url != target:
-            self._stop('SOURCE_URL_MISMATCH')
-        jobs = {}
-        self.ignored_slug_links = 0
-        links = snapshot.get('links')
-        if not isinstance(links, list):
-            self._stop('PARSE_ERROR', Stage.JOB_LINKS)
-        for link in links:
-            try:
-                job = job_from_url(link, {})
-            except ValueError:
-                if isinstance(link, str):
-                    parts = urlsplit(urljoin(ORIGIN, link))
-                    if (parts.scheme == "https" and parts.netloc == "lapras.com"
-                            and re.fullmatch(r"/jobs/[A-Za-z0-9_-]+", parts.path)
-                            and parts.path not in {"/jobs/home", "/jobs/search"}):
-                        self.ignored_slug_links += 1
-                continue
-            jobs.setdefault(job.job_id, job)
-        if not jobs:
-            # Absence is not evidence of an empty result/end of pagination.
-            self._stop('NO_STABLE_JOB_LINKS', Stage.JOB_LINKS)
-        return list(jobs.values())
+        # Only local waits on the same page: at most 2 seconds for late cards.
+        for attempt in range(5):
+            if attempt:
+                self.page.wait_for_timeout(500)
+            snapshot = self._snapshot(Stage.SOURCE_URL)
+            if self.page.url != target:
+                self._stop('SOURCE_URL_MISMATCH')
+            jobs = {}
+            self.ignored_slug_links = 0
+            links = snapshot.get('links')
+            if not isinstance(links, list):
+                self._stop('PARSE_ERROR', Stage.JOB_LINKS)
+            for link in links:
+                try:
+                    job = job_from_url(link, {})
+                except ValueError:
+                    if isinstance(link, str):
+                        parts = urlsplit(urljoin(ORIGIN, link))
+                        if (parts.scheme == "https" and parts.netloc == "lapras.com"
+                                and re.fullmatch(r"/jobs/[A-Za-z0-9_-]+", parts.path)
+                                and parts.path not in {"/jobs/home", "/jobs/search"}):
+                            self.ignored_slug_links += 1
+                    continue
+                jobs.setdefault(job.job_id, job)
+            if jobs:
+                return list(jobs.values())
+        # Absence is not evidence of an empty result/end of pagination.
+        self._stop('NO_STABLE_JOB_LINKS', Stage.JOB_LINKS)
 
     def _capture_safe_detail_diagnostic(self):
         try:

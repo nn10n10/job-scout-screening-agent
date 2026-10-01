@@ -10,7 +10,7 @@ Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增�
 不输出真实 ID、公司名、正文或 query value；登录失效仍返回 `NEEDS_LOGIN`。
 adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，使用数字职位 ID 和严格 URL 白名单；详情仅解析语义标题/字段，必须有同职位 canonical、职位标题和职责。缺字段、陌生路由、加载中、无有效链接均安全停止，不推定空结果。登录失效输出 `NEEDS_LOGIN`，只允许手动登录；不自动 OAuth、不回退 legacy 浏览器。本轮仅完成虚构离线验证，真实 DOM 解析与分页稳定性仍待授权 live 验收。
 
-LAPRAS 已接入 Search adapter、CLI Search 和 WebUI；live Search 当前因 `RESPONSIBILITIES_MISSING` 安全停止，职责 DOM 结构仍待调查。
+LAPRAS 已接入 Search adapter、CLI Search 和 WebUI，读取 `/jobs/home` 第一页及 numeric 职位详情。列表尚无 numeric 链接时，仅在同页最多等待 4 次、每次 500ms 并重新读取；耗尽仍安全停止，不推定空结果。列表就绪重读修复已补充离线测试，WebUI live 验收待 supervisor 确认。
 在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
 无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
