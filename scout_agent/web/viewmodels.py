@@ -186,7 +186,7 @@ def evaluation_detail(result: StoredEvaluation) -> EvaluationDetail:
     )
 
 
-def search_cards(results):
+def search_cards(results, user_states=None):
     from scout_agent.green_discovery import Job
     cards = []
     for job, result in results:
@@ -194,8 +194,20 @@ def search_cards(results):
             url = Job.from_url(job.url, {}).url
         except (ValueError, TypeError):
             url = None
-        cards.append(dict(verdict=result.verdict, company=job.fields.get('company'),
-                          title=job.fields.get('title'), salary=job.fields.get('salary'),
-                          location=job.fields.get('location'), sources=job.matched_keywords,
-                          summary=result.summary, concerns=result.concerns, url=url))
+        def preview(value, limit=72):
+            text = ' '.join(str(value or '').split())
+            return text if len(text) <= limit else text[:limit - 1] + '…'
+        cards.append(dict(
+            job_id=job.job_id, verdict=result.verdict,
+            user_status=(user_states or {}).get(job.job_id, 'ACTIVE'),
+            company=job.fields.get('company'), title=job.fields.get('title'),
+            salary_preview=preview(job.fields.get('salary'), 40),
+            location_preview=preview(job.fields.get('location')),
+            sources=job.matched_keywords,
+            source_preview=preview('、'.join(job.matched_keywords)),
+            summary_preview=preview(result.summary), summary=result.summary,
+            reasons=result.reasons, concerns=result.concerns, url=url,
+            **{key: job.fields.get(key) for key in
+               ('responsibilities', 'required', 'preferred', 'technology', 'remote')}
+        ))
     return sorted(cards, key=lambda card: {'TARGET': 0, 'POSSIBLE': 1, 'DROP': 2}[card['verdict']])

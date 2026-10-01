@@ -85,3 +85,90 @@ def test_search_page_wires_persistence_before_submit(tmp_path):
         assert "location.reload()" in html
         assert client.get('/static/search_config.js').status_code == 200
         assert app.state.search_runs.snapshot()['status'] == 'idle'
+
+
+def test_search_controls_labels_structure_and_styles(tmp_path):
+    from html.parser import HTMLParser
+    import re
+
+    class ControlsParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tags = []
+            self.labels = []
+            self.current_label = None
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            self.tags.append((tag, attrs))
+            if tag == 'label':
+                self.current_label = {'text': '', 'inputs': []}
+            elif tag == 'input' and self.current_label is not None:
+                self.current_label['inputs'].append(attrs)
+
+        def handle_data(self, data):
+            if self.current_label is not None:
+                self.current_label['text'] += data
+
+        def handle_endtag(self, tag):
+            if tag == 'label' and self.current_label is not None:
+                self.labels.append(self.current_label)
+                self.current_label = None
+
+    app = create_app(tmp_path / 'fictional.db', search_runner=lambda *args: 0)
+    with TestClient(app) as client:
+        html = client.get('/search').text
+        css = client.get('/static/styles.css').text
+    for label in ['搜索来源', '每轮深页数', '最大扫描页', '详情读取上限', 'AI 评价上限', 'Codex 批次大小']:
+        assert label in html
+    parser = ControlsParser()
+    parser.feed(html)
+    form = next(attrs for tag, attrs in parser.tags
+                if tag == 'form' and attrs.get('id') == 'search-form')
+    assert form['class'] == 'search-controls'
+    assert 'filters' not in form['class'].split()
+    expected_bindings = {
+        'coverage_pages': '每轮深页数',
+        'max_depth': '最大扫描页',
+        'max_jobs': '详情读取上限',
+        'max_model_jobs': 'AI 评价上限',
+        'codex_batch_size': 'Codex 批次大小',
+    }
+    for name, text in expected_bindings.items():
+        labels = [label for label in parser.labels
+                  if any(field.get('name') == name for field in label['inputs'])]
+        assert len(labels) == 1, name
+        assert labels[0]['text'].strip().startswith(text), name
+        assert len(labels[0]['inputs']) == 1, name
+    numbers = {attrs['name']: attrs for tag, attrs in parser.tags
+               if tag == 'input' and attrs.get('type') == 'number'}
+    assert set(numbers) == set(expected_bindings)
+    assert set(numbers) == set(LIMITS)
+    for name, (default, low, high) in LIMITS.items():
+        assert [numbers[name][key] for key in ['value', 'min', 'max']] == list(map(str, [default, low, high]))
+    panel = next(attrs for tag, attrs in parser.tags if attrs.get('id') == 'search-advanced-panel')
+    assert panel['class'] == 'search-advanced-panel' and 'hidden' in panel
+    toggle = next(attrs for tag, attrs in parser.tags if attrs.get('class') == 'search-advanced-toggle')
+    assert toggle['type'] == 'button' and toggle['aria-controls'] == panel['id']
+    assert toggle['aria-expanded'] == 'false'
+    assert "panel.hidden = !panel.hidden" in html
+    assert '仅影响本次搜索，不修改全局配置' in html
+    assert 'batch size 仅影响本次运行' not in html
+    rules = re.findall(r'\.search-advanced-panel\s*\{([^}]+)\}', css)
+    assert 'grid-column: 1 / -1' in rules[0]
+    assert 'repeat(3, minmax(0, 1fr))' in rules[0]
+    assert any('grid-template-columns: 1fr' in rule for rule in rules[1:])
+    hidden = re.search(r'\.search-advanced-panel\[hidden\]\s*\{([^}]+)\}', css).group(1)
+    assert 'display: none' in hidden
+    # The submit button occupies an explicit row above the expanding panel
+    # at every breakpoint, so expansion cannot displace it.
+    buttons = re.findall(r'\.search-controls #start\s*\{([^}]+)\}', css)
+    assert len(buttons) == len(rules) == 3
+    for button, panel_rule in zip(buttons, rules):
+        button_row = int(re.search(r'grid-row: (\d+)', button).group(1))
+        panel_row = int(re.search(r'grid-row: (\d+)', panel_rule).group(1))
+        assert button_row < panel_row
+    labels = re.search(r'\.search-source-options label\s*\{([^}]+)\}', css).group(1)
+    assert 'white-space: nowrap' in labels
+    assert 'flex-wrap: wrap' in re.search(r'\.search-source-options\s*\{([^}]+)\}', css).group(1)
+    assert 'border: 0' in re.search(r'\.search-sources\s*\{([^}]+)\}', css).group(1)
