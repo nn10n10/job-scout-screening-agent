@@ -292,7 +292,8 @@ function build([tag,text,children=[],hidden=false]) {
  getClientRects(){return this.hidden ? [] : [1]},
  matches(s){return s.split(',').includes(this.tag)}};
  node.children = children.map(build);
- node.children.forEach((n,i)=>n.nextElementSibling=node.children[i+1]||null);
+ node.children.forEach((n,i)=>{n.parentElement=node;n.nextElementSibling=node.children[i+1]||null});
+ node.querySelectorAll=s=>flatten(node.children).filter(n=>n.matches(s));
  return node;
 }
 const nodes=fixture.nodes.map(build);
@@ -342,3 +343,45 @@ def test_semantic_title_fallback(nodes, og, title, expected):
 ])
 def test_semantic_local_responsibilities(nodes, expected):
     assert semantic_dom(nodes, title='Fictional | LAPRAS').get('responsibilities') == expected
+
+
+def ancestor_summary_dom(depth, label='仕事内容', summary='概要', carrier='h4', direct=None,
+                         following=None):
+    children = [['p', label]]
+    if direct:
+        children.append(['p', direct])
+    wrapper = ['div', '', children]
+    for _ in range(depth - 1):
+        wrapper = ['div', '', [wrapper]]
+    return [wrapper, ['section', '', [['div', '', [
+        [carrier, summary], ['div', '', [['p', '架空基盤の運用']]],
+        *(following or [])]]]]]
+
+
+@pytest.mark.parametrize('depth', [1, 2, 3])
+@pytest.mark.parametrize('label', ['仕事内容', '業務内容', '職務内容'])
+def test_responsibilities_ancestor_summary(depth, label):
+    assert semantic_dom(ancestor_summary_dom(depth, label)).get('responsibilities') == '架空基盤の運用'
+
+
+@pytest.mark.parametrize('options', [
+    {'depth': 4}, {'depth': 3, 'summary': '求人概要'},
+    {'depth': 3, 'summary': '概要の紹介'}, {'depth': 3, 'carrier': 'p'},
+    {'depth': 3, 'label': '応募資格'},
+])
+def test_responsibilities_ancestor_summary_rejected(options):
+    assert 'responsibilities' not in semantic_dom(ancestor_summary_dom(**options))
+
+
+@pytest.mark.parametrize('boundary', ['給与', '応募資格', 'Other fictional heading'])
+def test_responsibilities_ancestor_summary_boundary(boundary):
+    nodes = ancestor_summary_dom(3, following=[['h4', boundary], ['p', 'FICTIONAL EXCLUDED']])
+    assert semantic_dom(nodes).get('responsibilities') == '架空基盤の運用'
+
+
+def test_responsibilities_ancestor_summary_preserves_direct():
+    assert semantic_dom(ancestor_summary_dom(3, direct='架空の直接業務')).get('responsibilities') == '架空の直接業務'
+
+
+def test_summary_without_responsibilities_label():
+    assert 'responsibilities' not in semantic_dom([['h4', '概要'], ['p', '架空基盤の運用']])

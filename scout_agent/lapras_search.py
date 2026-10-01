@@ -90,6 +90,40 @@ DETAIL = r"""() => {
    }
    return false;
  };
+ const responsibilityLabels = ['仕事内容', '業務内容', '職務内容'];
+ const summaryHeadings = 'h1,h2,h3,h4,h5,h6,[role=heading]';
+ const collectSummary = (node, texts) => {
+   if (!visible(node)) return false;
+   if (labelOf(node) || node.matches(summaryHeadings + ',dt,th')) return true;
+   if (node.children?.length) {
+     for (const child of node.children) {
+       if (collectSummary(child, texts)) return true;
+     }
+   } else {
+     texts.push(text(node));
+   }
+   return false;
+ };
+ const ancestorSummary = e => {
+   let ancestor = e;
+   for (let depth = 1; depth <= 3; depth++) {
+     ancestor = ancestor.parentElement;
+     if (!ancestor || ancestor.matches('body,html')) break;
+     const sibling = ancestor.nextElementSibling;
+     if (!sibling || !visible(sibling)) continue;
+     const candidates = [sibling, ...sibling.querySelectorAll(summaryHeadings)];
+     for (const heading of candidates) {
+       if (!visible(heading) || !heading.matches(summaryHeadings) || text(heading) !== '概要') continue;
+       const texts = [];
+       for (let n = heading.nextElementSibling; n; n = n.nextElementSibling) {
+         if (collectSummary(n, texts)) break;
+       }
+       const value = texts.filter(Boolean).join('\n');
+       if (value) return value;
+     }
+   }
+   return '';
+ };
  for (const e of document.querySelectorAll(carriers)) {
    if (e === titleNode) continue;
    const label = labelOf(e);
@@ -99,7 +133,8 @@ DETAIL = r"""() => {
    for (let n = e.nextElementSibling; n; n = n.nextElementSibling) {
      if (collect(n, label, texts) || e.matches('th')) break;
    }
-   const value = texts.filter(Boolean).join('\n');
+   let value = texts.filter(Boolean).join('\n');
+   if (!value && !sections[label] && responsibilityLabels.includes(label)) value = ancestorSummary(e);
    if (value && !sections[label]) sections[label] = value;
  }
  return {title, sections};
