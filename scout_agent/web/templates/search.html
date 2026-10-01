@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Green Search 候选池</title><link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}"></head>
+<title>Search 候选池</title><link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}"></head>
 <body><main class="shell"><a href="/">Scout 筛选 Dashboard</a>
-<header class="page-header"><p class="eyebrow">GREEN SEARCH · READ-ONLY</p><h1>Green Search 增量搜索</h1>
+<header class="page-header"><p class="eyebrow">SEARCH · READ-ONLY</p><h1>Search 增量搜索</h1>
 <p>来源：search（主动搜索）。按钮启动本地只读扫描，需要已登录的 Chrome CDP。</p></header>
 <form id="search-form" class="search-controls">
 <fieldset class="search-sources"><legend>搜索来源</legend><div class="search-source-options">{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source }}</label>{% endfor %}</div></fieldset>
@@ -15,17 +15,17 @@
 {% for value,label in [('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除'),('ALL','全部')] %}
 <a href="/search?status={{ value }}" {% if selected_status == value %}aria-current="page"{% endif %}>{{ label }}（{{ counts[value] }}）</a>
 {% endfor %}</nav>
-<p>人工状态仅保存到本地，不会向 Green 投递、拒绝或收藏。</p>
+<p>人工状态仅保存到本地，不会向招聘平台投递、拒绝或收藏。</p>
 <section class="search-list">
 {% for card in cards %}
 <article class="search-row">
 <div class="search-compact">
-<div class="search-badges"><span class="verdict">{{ card.verdict }}</span><span class="user-status">{{ {'ACTIVE':'待处理','APPLIED':'已投递','EXCLUDED':'已排除'}[card.user_status] }}</span></div>
+<div class="search-badges"><span class="platform">{{ card.platform_label }}</span><span class="verdict">{{ card.verdict }}</span><span class="user-status">{{ {'ACTIVE':'待处理','APPLIED':'已投递','EXCLUDED':'已排除'}[card.user_status] }}</span></div>
 <div class="search-title"><h3>{{ card.title or '职位未注明' }}</h3><span class="muted">{{ card.company or '公司未注明' }}</span></div>
 <span class="compact-preview">{{ card.salary_preview or '薪资未注明' }}</span>
 <span class="compact-preview location-preview">{{ card.location_preview or '地点未注明' }}</span>
 <span class="compact-preview">{{ card.source_preview or '来源未注明' }}</span>
-{% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Green ↗</a>{% endif %}
+{% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.platform_label }} ↗</a>{% endif %}
 <button type="button" class="expand-job" aria-expanded="false" aria-controls="job-{{ loop.index }}">展开详情</button>
 </div>
 <div class="search-details" id="job-{{ loop.index }}" hidden>
@@ -36,7 +36,7 @@
 {% for field,label in [('responsibilities','工作职责'),('required','必备要求'),('preferred','加分要求'),('technology','技术'),('remote','远程')] %}
 <dt>{{ label }}</dt><dd>{{ card[field] or '未注明' }}</dd>
 {% endfor %}
-{% if card.url %}<dt>Green 原始职位</dt><dd><a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.url }}</a></dd>{% endif %}
+{% if card.url %}<dt>{{ card.platform_label }} 原始职位</dt><dd><a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.url }}</a></dd>{% endif %}
 </dl>
 <div class="user-actions" data-job-id="{{ card.job_id }}">
 {% if card.user_status == 'ACTIVE' %}
@@ -83,7 +83,7 @@ document.querySelectorAll('.user-actions').forEach(actions => {
     action.addEventListener('click', () => {
       pending = action.dataset.status;
       actions.querySelector('.confirm-message').textContent = ({
-        APPLIED:'确认将此职位在本地标记为已投递？不会向 Green 投递。',
+        APPLIED:'确认将此职位在本地标记为已投递？不会向招聘平台投递。',
         EXCLUDED:'确认本地排除？之后可在“已排除”中恢复到待处理。',
         ACTIVE:'确认恢复到待处理？'
       })[pending];
