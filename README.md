@@ -10,7 +10,7 @@ Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增�
 不输出真实 ID、公司名、正文或 query value；登录失效仍返回 `NEEDS_LOGIN`。
 adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，使用数字职位 ID 和严格 URL 白名单；详情仅解析语义标题/字段，必须有同职位 canonical、职位标题和职责。缺字段、陌生路由、加载中、无有效链接均安全停止，不推定空结果。登录失效输出 `NEEDS_LOGIN`，只允许手动登录；不自动 OAuth、不回退 legacy 浏览器。本轮仅完成虚构离线验证，真实 DOM 解析与分页稳定性仍待授权 live 验收。
 
-LAPRAS 当前仅提供 TASK-008 阶段 A 定向调查，尚未接入 Search adapter、CLI Search 或 WebUI。
+LAPRAS 已接入 Search adapter、CLI Search 和 WebUI；live Search 当前因 `RESPONSIBILITIES_MISSING` 安全停止，职责 DOM 结构仍待调查。
 在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
 无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
@@ -18,7 +18,11 @@ LAPRAS 当前仅提供 TASK-008 阶段 A 定向调查，尚未接入 Search adap
 分页路径及固定 query-key、next/prev/page-number/load-more 候选、固定白名单字段标题及加载/安全失败状态。
 `/jobs/:segment` 仅为路由候选，不认定 slug 是稳定 ID；load-more 只读取固定标签或链接候选，不点击。
 真实 ID、公司名、JD、query value、个人资料和认证信息均不输出。登录失效保留 `NEEDS_LOGIN`，需手动登录。
-阶段 A 完成后等待 supervisor 审阅真实脱敏 probe 证据，再实施正式 adapter；分页未知时不猜 selector。
+仅在 LAPRAS numeric detail `/jobs/<id>` 上追加 `lapras_structure`：固定 label、tag（非白名单为 null）、固定 role/semantic_role、最近三层 ancestor、正文及下一个固定 label 的结构关系候选。
+关系枚举为 same-parent-next-sibling / same-parent-following-sibling / ancestor-next-sibling / nested-next-block / tab-panel；候选不代表正式 parser selector。
+title 只输出 `visible_h1_count`、`has_og_title`、`has_document_title`。未 exact-match「仕事内容」时，额外输出 normalized text 以该 label 开头的元素 tag 与 boolean。
+不输出 title、正文、class/id/data-* 或任意属性值（固定 role 除外）；每页最多 100 个 label 和 100 个 prefix 元素。
+本轮只增强 probe，正式 parser 未变；等待 supervisor 审阅 numeric detail tab 的同一 platform_discovery 输出后再决定解析方式。分页未知时不猜 selector。
 
 ## 架构
 

@@ -7,6 +7,8 @@ import re
 import sys
 from urllib.parse import urlsplit, parse_qsl
 
+from scout_agent.lapras_structure import STRUCTURE, sanitize
+
 PLATFORMS = {
     'forkwell': frozenset({'jobs.forkwell.com', 'forkwell.com'}),
     'findy': frozenset({'findy-code.io'}),
@@ -56,6 +58,15 @@ SNAPSHOT = """() => {
    login: false
  };
 }""" % json.dumps(sorted(LABELS), ensure_ascii=False)
+
+
+LAPRAS_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
+    "if (!snapshot.login) snapshot.lapras_structure = (" + STRUCTURE + ")(); return snapshot; }"
+
+
+def lapras_numeric_detail(platform, url):
+    return (platform == 'lapras' and allowed(url, platform)
+            and re.fullmatch(r'/jobs/[0-9]+/?', urlsplit(url).path) is not None)
 
 
 def allowed(url, platform):
@@ -140,6 +151,8 @@ def evidence(platform, url, snapshot):
         result['stable_id_candidates'] = (
             ['numeric_path_segment'] if '/jobs/:id' in candidates
             or result['stable_id_path_segment'] else [])
+        if lapras_numeric_detail(platform, url) and 'lapras_structure' in snapshot:
+            result['lapras_structure'] = sanitize(snapshot['lapras_structure'])
     if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
     elif not candidates and result.get('page_kind') != 'detail':
@@ -226,7 +239,8 @@ def collect(browser, platforms):
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                snapshot = page.evaluate(SNAPSHOT)
+                script = LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT
+                snapshot = page.evaluate(script)
                 if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                 elif page.url != before:

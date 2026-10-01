@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scout_agent.platform_discovery import SNAPSHOT, collect, evidence
+from scout_agent.platform_discovery import SNAPSHOT, LAPRAS_DETAIL_SNAPSHOT, collect, evidence
 
 BASE = 'https://lapras.com'
 
@@ -103,7 +103,7 @@ def test_malformed_snapshot_read_failed(snapshot):
     page.evaluate.return_value = snapshot
     rows = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['lapras'])
     assert rows == [{'platform': 'lapras', 'safe_failure_category': 'READ_FAILED'}]
-    assert page.method_calls == [('evaluate', (SNAPSHOT,), {})]
+    assert page.method_calls == [('evaluate', (LAPRAS_DETAIL_SNAPSHOT,), {})]
 
 
 def test_login_route_not_read_and_redirect_needs_login():
