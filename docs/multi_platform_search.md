@@ -103,3 +103,56 @@ fragment、真实 ID、链接文本、公司名、个人资料、JD 正文、coo
   显示六平台选项及“不导航、不登录、0 模型调用”。
 - `git diff --check` 退出码 0，无输出。
 - live 与真实数据库验证：not run；真实浏览器/招聘网站/付费模型访问：none。
+
+## Issue #13 补充：登录失效处理
+
+probe 在读取链接/字段之前检测可见密码框、登录表单、登录或 session expired
+标题/按钮（包括 Google SSO 登录按钮）；只返回布尔值，不保留认证页面文本。
+已打开的平台登录路由直接输出 NEEDS_LOGIN，不读取页面。读取过程中跳转到
+平台登录路由或 accounts.google.com 时，即使读取抛异常也归类为 NEEDS_LOGIN，
+不继续读取职位证据或详情；仍继续其他平台。不会点击登录按钮或完成 OAuth。
+
+stdout 保留原有脱敏页面证据 JSON；stderr 每个平台输出一行 JSON 汇总：
+OK / NEEDS_LOGIN / BLOCKED / UNSUPPORTED。NEEDS_LOGIN 优先于同平台其他
+标签页的成功状态，附带中文手动登录提示。OK 仅表示发现候选链接，不等于
+已验证 adapter。UNSUPPORTED 表示缺少可归属的标签页证据，不表示网站没有
+Search 功能。BLOCKED 表示加载中、读取失败或缺少候选等安全阻塞。
+
+如果标签页在 probe 启动前已经停留在 Google 域名，无法可靠确定所属平台；
+不会读取 Google 页面或根据 OAuth query 推断平台，此时对应平台可能输出
+UNSUPPORTED。需人工恢复平台页面后再调查。通用检测不能证明已登录，
+未来 adapter 必须补充经真实 DOM 验证的认证证据；本轮不猜测平台 selector。
+
+WebUI telemetry 支持 allowlist 平台的 NEEDS_LOGIN 汇总，丢弃原始 message，
+显示独立中文登录提示。当前 WebUI 仍仅运行 Green；这只是后续平台接入的
+安全类别准备，不代表第二平台已接入或登录态已获 live 验证。
+
+本轮禁止浏览器/网络，未调查 live DOM，未启用第二平台。下一步由获授权的
+supervisor 先调查 type Search，再按 AGENTS 顺序选择可落地的平台。
+
+### 本次补充验证（主 Agent，无可用 subagent）
+
+精确命令：
+
+```bash
+/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest -q --basetemp=.pytest-login-final-tmp tests/test_platform_discovery.py tests/test_search_platforms.py tests/test_green_search_discovery.py tests/test_web_search.py -k 'not test_get_csrf_validation_and_single_run and not test_invalid_request and not test_safety_stop_context_redaction_and_reset'
+```
+
+退出码 0；摘要 `148 passed, 16 deselected, 1 warning`，failed/skipped/xfailed：none。
+warning：`StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
+focused tests：`test_login_redirect_is_not_domain_or_parse_failure`、
+`test_login_page_stops_before_snapshot`、
+`test_redirect_during_read_stops_and_continues_other_platforms`、
+`test_login_dom_discards_all_job_evidence`、
+`test_summary_one_status_per_platform_and_login_precedence`、
+`test_needs_login_summary_is_a_distinct_safe_ui_category`。
+DOM 测试使用 mocked snapshot，未执行真实浏览器 JavaScript。
+
+首次完整 Web 用例运行在 TestClient 用例停滞后中断（退出码 130，无最终
+pytest summary），当次还包含已修复的 sign_in 路由识别失败。
+因此排除上述 TestClient 用例对应的 16 个 case；未宣称完整 Web 回归通过。
+
+CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent.platform_discovery --help`，
+退出码 0；stdout 含六个平台选项和“不导航、不登录、0 模型调用”。
+`git diff --check` 退出码 0，无输出。
+真实浏览器/数据库/招聘网站/付费模型访问：none；live 验证：not run。

@@ -118,6 +118,7 @@ async function poll() {
     document.getElementById('time').textContent = run.started_at ? `开始：${run.started_at}；已运行：${run.elapsed_seconds} 秒；结束：${run.finished_at || '—'}` : '';
     document.getElementById('output').textContent = run.summary.join('\n');
     document.getElementById('error').textContent = run.error ? `安全错误类别：${run.error}；请检查本地配置后重试。` : '';
+    if (run.error === 'NEEDS_LOGIN') document.getElementById('error').textContent = '[NEEDS_LOGIN] 登录已失效，请在 agent 专用浏览器中手动完成登录后重试。';
     if (run.safe_reason) document.getElementById('error').textContent += ` source：${run.failed_source || '—'}；page：${run.failed_page || '—'}；safe_reason：${run.safe_reason}`;
     if (previous === 'running' && run.status !== 'running') { location.reload(); return; }
     previous = run.status;

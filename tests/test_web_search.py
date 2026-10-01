@@ -150,3 +150,15 @@ def test_safety_stop_context_redaction_and_reset(tmp_path):
     manager.runner = lambda *args: 0
     manager.start({'sources':['AWS']})
     assert wait(manager)['safe_reason'] is None
+
+
+def test_needs_login_summary_is_a_distinct_safe_ui_category():
+    import json
+    from scout_agent.web.search_runs import SearchRunManager
+    manager = SearchRunManager()
+    manager._emit(json.dumps({'platform': 'findy', 'status': 'NEEDS_LOGIN',
+                              'message': 'fictional private token'}))
+    manager._finish(1)
+    state = manager.snapshot()
+    assert state['error'] == 'NEEDS_LOGIN'
+    assert 'fictional private token' not in json.dumps(state)

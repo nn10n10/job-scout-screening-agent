@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from urllib.parse import urlsplit, parse_qsl
 
 PLATFORMS = {
@@ -22,6 +23,11 @@ LABELS = frozenset({'仕事内容', '応募資格', '必須要件', '歓迎要�
 # No body text, anchor text, profile data, cookies or storage are read.
 SNAPSHOT = """() => {
  const visible = e => !!(e.getClientRects().length) && getComputedStyle(e).visibility !== 'hidden';
+ const login = Array.from(document.querySelectorAll('input[type="password"],form[action],h1,h2,button,[role="button"]'))
+   .filter(visible).some(e => e.matches('input[type="password"]') ||
+     /(?:^|\\/)(?:login|signin|sign-in|sign_in)(?:\\/|$|\\?)/i.test(e.getAttribute('action') || '') ||
+     /^(?:ログイン|サインイン|登录|Sign in|Log in|Googleでログイン|Googleでサインイン|Sign in with Google|Session expired|セッションの有効期限が切れました|登录已失效)$/i.test((e.textContent || '').trim()));
+ if (login) return {login: true};
  const labels = %s;
  return {
    links: Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 2000).map(e => e.href),
@@ -30,7 +36,7 @@ SNAPSHOT = """() => {
    ready: document.readyState,
    busy: !!document.querySelector('[aria-busy="true"]'),
    spa: !!document.querySelector('#__next,#__nuxt,[data-reactroot]'),
-   login: !!document.querySelector('input[type="password"]')
+   login: false
  };
 }""" % json.dumps(sorted(LABELS), ensure_ascii=False)
 
@@ -52,8 +58,45 @@ def path_pattern(url):
                     else ':segment' if s else '' for s in parts)
 
 
+def login_url(url, platform):
+    """Recognize authentication routes without retaining OAuth parameters."""
+    try:
+        p = urlsplit(url)
+        if p.scheme != 'https' or p.username or p.password:
+            return False
+        if p.netloc == 'accounts.google.com':
+            return True
+        return allowed(url, platform) and bool(re.search(
+            r'/(?:login|signin|sign-in|sign_in|log-in)(?:/|$)', p.path, re.I))
+    except (ValueError, TypeError):
+        return False
+
+
+def failure(platform, category):
+    return {'platform': platform, 'safe_failure_category': category}
+
+
+def platform_summary(rows, platforms):
+    """One safe status per platform, with authentication taking precedence."""
+    output = []
+    for platform in platforms:
+        categories = {r['safe_failure_category'] for r in rows if r['platform'] == platform}
+        status = ('NEEDS_LOGIN' if 'NEEDS_LOGIN' in categories else
+                  'BLOCKED' if categories - {'NONE', 'NO_OPEN_TAB'} else
+                  'OK' if 'NONE' in categories else 'UNSUPPORTED')
+        row = {'platform': platform, 'status': status}
+        if status == 'NEEDS_LOGIN':
+            row['message'] = f'[NEEDS_LOGIN] platform={platform}：登录已失效，请在 agent 专用浏览器中手动完成登录（如 Google 登录）后重试。'
+        elif status == 'UNSUPPORTED':
+            row['message'] = '没有可归属的平台标签页，尚无调查证据；不代表平台不支持 Search。'
+        output.append(row)
+    return output
+
+
 def evidence(platform, url, snapshot):
     result = {'platform': platform, 'safe_failure_category': 'NONE'}
+    if login_url(url, platform) or (allowed(url, platform) and snapshot.get('login')):
+        return failure(platform, 'NEEDS_LOGIN')
     if not allowed(url, platform):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
     result['route_path'] = path_pattern(url)
@@ -71,9 +114,7 @@ def evidence(platform, url, snapshot):
         busy=snapshot.get('busy') is True,
         spa_marker_present=snapshot.get('spa') is True,
     )
-    if snapshot.get('login'):
-        result['safe_failure_category'] = 'NEEDS_LOGIN'
-    elif result['busy'] or result['loading_state'] != 'complete':
+    if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
     elif not candidates:
         result['safe_failure_category'] = 'NO_JOB_LINK_EVIDENCE'
@@ -90,13 +131,18 @@ def collect(browser, platforms):
         for page in pages[:10]:
             try:
                 before = page.url
+                if login_url(before, platform):
+                    output.append(failure(platform, 'NEEDS_LOGIN'))
+                    continue
                 snapshot = page.evaluate(SNAPSHOT)
-                if page.url != before:
+                if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
+                    output.append(failure(platform, 'NEEDS_LOGIN'))
+                elif page.url != before:
                     output.append({'platform': platform, 'safe_failure_category': 'PAGE_CHANGED'})
                 else:
                     output.append(evidence(platform, before, snapshot))
             except Exception:
-                output.append({'platform': platform, 'safe_failure_category': 'READ_FAILED'})
+                output.append(failure(platform, 'NEEDS_LOGIN' if login_url(page.url, platform) else 'READ_FAILED'))
     return output
 
 
@@ -127,6 +173,9 @@ def main(argv=None):
         print(json.dumps({'safe_failure_category': 'CDP_UNAVAILABLE'}))
         return 1
     print(json.dumps(rows, ensure_ascii=False, indent=2))
+    for row in platform_summary(rows, args.platform or list(PLATFORMS)):
+        # Keep stdout JSON compatible; summaries are fixed, redacted CLI messages.
+        print(json.dumps(row, ensure_ascii=False), file=sys.stderr)
     return 0 if all(row['safe_failure_category'] == 'NONE' for row in rows) else 1
 
 

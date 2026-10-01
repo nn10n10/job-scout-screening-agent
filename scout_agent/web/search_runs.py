@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 import secrets
@@ -11,6 +12,7 @@ import threading
 from datetime import datetime, timezone
 
 from scout_agent.green_discovery import KEYWORDS, SAFE_REASONS
+from scout_agent.platform_discovery import PLATFORMS
 
 LIMITS = {'coverage_pages': (2, 1, 15), 'max_depth': (15, 2, 100),
           'max_jobs': (30, 1, 500), 'max_model_jobs': (20, 1, 200),
@@ -91,6 +93,14 @@ class SearchRunManager:
     def _emit(self, line):
         safe = None
         with self.lock:
+            try:
+                status = json.loads(line)
+            except (ValueError, TypeError):
+                status = None
+            if (isinstance(status, dict) and status.get('status') == 'NEEDS_LOGIN'
+                    and status.get('platform') in (*PLATFORMS, 'green')):
+                self.state['error'] = 'NEEDS_LOGIN'
+                return
             context = re.fullmatch(
                 r'Green safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
             if context and context[1] in (*KEYWORDS, 'NONE') and context[3] in SAFE_REASONS:

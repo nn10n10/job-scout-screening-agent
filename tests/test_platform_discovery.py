@@ -107,3 +107,65 @@ def test_main_mocked_cdp(monkeypatch, capsys):
     chromium.connect_over_cdp.side_effect = RuntimeError('private endpoint token')
     assert main(['--cdp-endpoint', 'http://127.0.0.1:9222']) == 1
     assert json.loads(capsys.readouterr().out) == {'safe_failure_category': 'CDP_UNAVAILABLE'}
+
+
+@pytest.mark.parametrize('url', [
+    'https://findy-code.io/login?email=fictional&token=secret',
+    'https://findy-code.io/users/sign_in',
+    'https://accounts.google.com/v3/signin/identifier?state=secret',
+])
+def test_login_redirect_is_not_domain_or_parse_failure(url):
+    from scout_agent.platform_discovery import login_url
+    # sign_in is a conventional authentication route too.
+    assert login_url(url, 'findy')
+    row = evidence('findy', url, {'links': ['https://findy-code.io/jobs/123']})
+    assert row == {'platform': 'findy', 'safe_failure_category': 'NEEDS_LOGIN'}
+    assert 'secret' not in json.dumps(row)
+
+
+def test_login_page_stops_before_snapshot():
+    page = Mock(url='https://findy-code.io/login')
+    rows = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['findy'])
+    assert rows[0]['safe_failure_category'] == 'NEEDS_LOGIN'
+    assert page.method_calls == []
+
+
+@pytest.mark.parametrize('raises', [False, True])
+def test_redirect_during_read_stops_and_continues_other_platforms(raises):
+    class Page:
+        url = 'https://findy-code.io/search'
+        calls = 0
+        def evaluate(self, script):
+            self.calls += 1
+            self.url = 'https://accounts.google.com/v3/signin?state=fictional-secret'
+            if raises:
+                raise RuntimeError('fictional-secret')
+            return {'ready': 'complete', 'links': ['https://findy-code.io/jobs/123']}
+    expired = Page()
+    good = Mock(url='https://type.jp/search')
+    good.evaluate.return_value = {'ready': 'complete', 'links': ['https://type.jp/jobs/123']}
+    rows = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[expired, good])]), ['findy', 'type'])
+    assert [r['safe_failure_category'] for r in rows] == ['NEEDS_LOGIN', 'NONE']
+    assert expired.calls == 1
+    assert good.method_calls == [('evaluate', (SNAPSHOT,), {})]
+    assert 'fictional-secret' not in json.dumps(rows)
+
+
+def test_login_dom_discards_all_job_evidence():
+    row = evidence('findy', 'https://findy-code.io/search', {
+        'login': True, 'links': ['https://findy-code.io/jobs/123'], 'ready': 'complete',
+    })
+    assert row == {'platform': 'findy', 'safe_failure_category': 'NEEDS_LOGIN'}
+    assert SNAPSHOT.index('if (login) return') < SNAPSHOT.index("querySelectorAll('a[href]')")
+    assert 'Googleでログイン' in SNAPSHOT
+
+
+def test_summary_one_status_per_platform_and_login_precedence():
+    from scout_agent.platform_discovery import platform_summary
+    rows = [{'platform': p, 'safe_failure_category': c} for p, c in [
+        ('findy', 'NONE'), ('findy', 'NEEDS_LOGIN'), ('type', 'NONE'),
+        ('doda', 'READ_FAILED'), ('lapras', 'NO_OPEN_TAB'),
+    ]]
+    summary = platform_summary(rows, ['findy', 'type', 'doda', 'lapras'])
+    assert [r['status'] for r in summary] == ['NEEDS_LOGIN', 'OK', 'BLOCKED', 'UNSUPPORTED']
+    assert '[NEEDS_LOGIN] platform=findy' in summary[0]['message']
