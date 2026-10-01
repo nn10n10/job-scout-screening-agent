@@ -165,7 +165,7 @@ class LaprasSearchAdapter:
     def source_url(self, label, page=1):
         if label not in SOURCES or type(page) is not int or page != 1:
             raise ValueError('Lapras 搜索来源或页码无效')
-        return ORIGIN + '/jobs/search'
+        return ORIGIN + '/jobs/home'
 
     def validate_job(self, job):
         checked = job_from_url(job.url, {})
@@ -241,7 +241,7 @@ class LaprasSearchAdapter:
                     parts = urlsplit(urljoin(ORIGIN, link))
                     if (parts.scheme == "https" and parts.netloc == "lapras.com"
                             and re.fullmatch(r"/jobs/[A-Za-z0-9_-]+", parts.path)
-                            and parts.path != "/jobs/search"):
+                            and parts.path not in {"/jobs/home", "/jobs/search"}):
                         self.ignored_slug_links += 1
                 continue
             jobs.setdefault(job.job_id, job)

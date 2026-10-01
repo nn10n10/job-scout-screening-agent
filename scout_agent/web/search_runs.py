@@ -41,7 +41,8 @@ def validate_config(data):
     if 'platform' in data:
         config['platform'] = platform
     for name, (default, low, high) in LIMITS.items():
-        value = data.get(name, default)
+        value = (default if platform == 'lapras' and name in {'coverage_pages', 'max_depth'}
+                 else data.get(name, default))
         if type(value) is not int or not low <= value <= high:
             raise ValueError(f'{name} 必须为 {low}–{high} 的整数')
         config[name] = value

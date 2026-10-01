@@ -18,7 +18,7 @@ PLATFORMS = {
     'mynavi': frozenset({'tenshoku.mynavi.jp'}),
 }
 SEGMENTS = frozenset({'jobs', 'job', 'search', '求人', 'companies', 'company',
-                      'career', 'careers', 'list', 'detail', 'index', 'view'})
+                      'home', 'career', 'careers', 'list', 'detail', 'index', 'view'})
 LABELS = frozenset({'仕事内容', '応募資格', '必須要件', '歓迎要件', '給与', '勤務地',
                     '勤務時間', '雇用形態', '福利厚生', '開発環境', '技術', '検索結果',
                     '求人検索', '募集要項', 'リモート', '年収'})
@@ -186,7 +186,8 @@ def forkwell_evidence(url, snapshot, links, *, platform='forkwell'):
     segment = lapras_job_segment if platform == 'lapras' else forkwell_id_segment
     job_links = [link for link in links if segment(link) is not None]
     position = segment(url)
-    result = {'page_kind': 'detail' if position else 'list' if job_links else 'other',
+    source_route = platform == 'lapras' and urlsplit(url).path.rstrip('/') == '/jobs/home'
+    result = {'page_kind': 'detail' if position else 'list' if source_route or job_links else 'other',
               'job_link_count': len(job_links),
               'job_link_patterns': sorted({path_pattern(link) for link in job_links}),
               'stable_id_path_segment': position,

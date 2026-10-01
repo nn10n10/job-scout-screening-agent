@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from scout_agent.green_discovery import KEYWORDS
@@ -236,11 +238,26 @@ function form() {
   f.render(); return f;
 }
 const first = form(); first.elements.platform.value = 'lapras'; first.render();
+first.numbers.find(i => i.name === 'coverage_pages').value = '-9';
+first.numbers.find(i => i.name === 'max_depth').value = '1';
+
 assert.equal(SearchConfig.save(first, limits), true);
 assert.equal(JSON.parse(stored).platform, 'lapras');
+const normalized = JSON.parse(stored);
+for (const name of ['coverage_pages', 'max_depth']) assert.equal(normalized[name], limits[name][0]);
+for (const platform of ['green', 'forkwell']) {
+  assert.equal(SearchConfig.validate({...normalized, platform, max_depth:1}, ['求人検索'], limits), null);
+  assert.equal(SearchConfig.validate({...normalized, platform, coverage_pages:-9}, ['求人検索'], limits), null);
+}
+stored = JSON.stringify({...normalized, coverage_pages:'invalid', max_depth:1});
+
 const second = form(); SearchConfig.restore(second, limits, second.render);
 assert.equal(second.elements.platform.value, 'lapras');
 assert.deepEqual(second.inputs.map(i => i.value), ['求人検索']);
+for (const name of ['coverage_pages', 'max_depth']) {
+  assert.equal(second.numbers.find(i => i.name === name).value, limits[name][0]);
+}
+
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
@@ -252,3 +269,14 @@ console.log('Forkwell platform and source survive reload; cross-platform sources
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
+
+
+@pytest.mark.parametrize('value', [1, -9, 1000, 'invalid', None, True])
+def test_platform_aware_disabled_paging(value):
+    from scout_agent.web.search_runs import validate_config
+    config = validate_config({'platform': 'lapras', 'coverage_pages': value, 'max_depth': value})
+    assert config['coverage_pages'] == LIMITS['coverage_pages'][0]
+    assert config['max_depth'] == LIMITS['max_depth'][0]
+    for platform in ['green', 'forkwell']:
+        with pytest.raises(ValueError):
+            validate_config({'platform': platform, 'coverage_pages': value, 'max_depth': value})

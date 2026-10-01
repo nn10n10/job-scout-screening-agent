@@ -15,8 +15,9 @@ const SearchConfig = (() => {
         data.sources.some(source => !sources.includes(source))) return null;
     const config = {sources: [...data.sources]};
     if ('platform' in data) config.platform = data.platform;
-    for (const [name, [, low, high]] of Object.entries(limits)) {
-      const value = data[name];
+    for (const [name, [defaultValue, low, high]] of Object.entries(limits)) {
+      const value = data.platform === 'lapras' && ['coverage_pages', 'max_depth'].includes(name)
+        ? defaultValue : data[name];
       if (!Number.isInteger(value) || value < low || value > high) return null;
       config[name] = value;
     }

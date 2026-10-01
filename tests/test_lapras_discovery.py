@@ -164,3 +164,22 @@ globalThis.document = {readyState: 'complete', querySelector: () => null,
     snapshot['links'] = [BASE + '/jobs/876543']
     assert probe(**snapshot)['pagination_candidates'] == ['load-more']
     assert 'secret' not in json.dumps(probe(**snapshot))
+
+
+@pytest.mark.parametrize('path', ['/jobs/home', '/jobs/search'])
+def test_source_routes_are_not_job_candidates(path):
+    row = probe(path, links=[BASE + '/jobs/home', BASE + '/jobs/search',
+                            BASE + '/jobs/876543', BASE + '/jobs/fictional-job'])
+    assert row['route_path'] == path
+    assert row['page_kind'] == 'list'
+    assert row['stable_id_path_segment'] is None
+    assert row['canonical_url_pattern'] is None
+    assert row['job_link_count'] == 2
+    assert row['job_link_patterns'] == ['/jobs/:id', '/jobs/:segment']
+
+
+def test_home_without_links_is_list_but_fails_closed():
+    row = probe('/jobs/home', links=[BASE + '/jobs/home', BASE + '/jobs/search'])
+    assert row['page_kind'] == 'list'
+    assert row['job_link_count'] == 0
+    assert row['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'

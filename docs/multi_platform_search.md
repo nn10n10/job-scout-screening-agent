@@ -88,15 +88,16 @@ warning 为既有 `StarletteDeprecationWarning: Using httpx with starlette.testc
 全部模型调用均 mock，SQLite 仅虚构临时 fixture，真实浏览器/数据库/招聘网站/付费模型访问 none。
 
 
-LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/search` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。
+LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/home` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。
 
 
 ### LAPRAS 阶段 A 定向证据与阶段 B 边界
 
-Supervisor 提供的脱敏 live 证据：`/jobs/search` 为 list，13 个 job links，
+Supervisor 最新 live 证据确认 source 为 `/jobs/home`，32 个 job links，
 路径类型为 `/jobs/:id` 与 `/jobs/:segment`；numeric_path_segment 是唯一稳定 ID。
-未发现 pagination links、query keys 或候选结构，pagination_mode=unknown；
-loading complete、busy=false、SPA=false。列表标题命中 年収 / 開発環境 / 雇用形態。
+旧 probe 将 home 脱敏并误判为 detail；修复后固定显示 `/jobs/home` 并识别为 list。
+观察到 `page` query key candidate，但没有 verified pagination controls/link evidence，
+因此仍不启用分页。`/jobs/search` 是此前硬编码导航遗留 tab，不作为 source 证据，也不导航它。
 Numeric detail canonical 为同 `/jobs/:id`，稳定 ID 位于路径 segment 2；
 标题命中 勤務地 / 給与 / 開発環境 / 雇用形態。Slug detail 无稳定路径 ID 或 canonical，
 因此不能用于持久化身份。职责仍需命中固定 allowlist，否则 fail-closed。

@@ -22,13 +22,13 @@ def test_numeric_identity_and_canonical(url):
 
 @pytest.mark.parametrize('url', ['http://jobs.lapras.com/jobs/1', 'https://evil.test/jobs/1',
     'https://lapras.com.evil.test/jobs/1', 'https://user@jobs.lapras.com/jobs/1',
-    '/jobs/search', '/jobs/abc', '/jobs/1/apply', '/jobs/1\n', '', None])
+    '/jobs/home', '/jobs/search', '/jobs/abc', '/jobs/1/apply', '/jobs/1\n', '', None])
 def test_job_allowlist(url):
     with pytest.raises(ValueError):
         job_from_url(url, {})
 
 
-def adapter(snapshot, url='https://lapras.com/jobs/search'):
+def adapter(snapshot, url='https://lapras.com/jobs/home'):
     a = LaprasSearchAdapter()
     a.page = Mock(url=url)
     a.page.evaluate.return_value = {'ready': 'complete', 'login': False, **snapshot}
@@ -36,9 +36,10 @@ def adapter(snapshot, url='https://lapras.com/jobs/search'):
 
 
 def test_broad_list_routes_and_deduplication():
-    a = adapter({'links': ['/jobs/123', '/jobs/123?tracking=fictional', 'https://evil.test/jobs/2']})
+    a = adapter({'links': ['/jobs/123', '/jobs/123?tracking=fictional', 'https://evil.test/jobs/2', '/jobs/home', '/jobs/search']})
     assert [j.job_id for j in a.search_cards('求人検索', 1)] == ['lapras:123']
-    a.page.goto.assert_called_once_with('https://lapras.com/jobs/search', wait_until='load', timeout=15000)
+    assert a.ignored_slug_links == 0
+    a.page.goto.assert_called_once_with('https://lapras.com/jobs/home', wait_until='load', timeout=15000)
     with pytest.raises(ValueError): a.source_url('求人検索', 2)
     for label, page in [('AWS', 1), ('求人検索', 0), ('求人検索', True)]:
         with pytest.raises(ValueError): a.source_url(label, page)
