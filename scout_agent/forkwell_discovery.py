@@ -13,8 +13,10 @@ SOURCES = ('求人一覧',)
 JOB_PATH = re.compile(r'/(?:[A-Za-z0-9_-]+/)?jobs/([0-9]+)/?')
 ALIASES = {
     '仕事内容': 'responsibilities', '業務内容': 'responsibilities',
+    '職務内容': 'responsibilities',
     '応募資格': 'required', '必須要件': 'required', '必須スキル': 'required',
-    '歓迎要件': 'preferred', '歓迎スキル': 'preferred',
+    '必須スキル/経験': 'required',
+    '歓迎要件': 'preferred', '歓迎スキル': 'preferred', '歓迎スキル/経験': 'preferred',
     '開発環境': 'technology', '技術': 'technology', '給与': 'salary', '年収': 'salary',
     '勤務地': 'location', 'リモート': 'remote', 'リモートワーク': 'remote',
     '企業名': 'company', '会社名': 'company', '雇用形態': 'employment',
@@ -39,15 +41,22 @@ def parse_fields(sections, title=''):
         key = ALIASES.get(label)
         if key and isinstance(value, str) and value.strip():
             fields[key] = value.strip()
+    # Fixed priority, independent of DOM order; summaries never override duties.
+    for label in ('業務内容', '仕事内容', '職務内容', '仕事概要', '求人概要'):
+        value = sections.get(label)
+        if isinstance(value, str) and value.strip():
+            fields['responsibilities'] = value.strip()
+            break
     return fields
 
 
 # Semantic HTML only: no site CSS selectors, body fallback, clicks or form submission.
 DETAIL = r"""() => {
  const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+ const title = Array.from(document.querySelectorAll('h1')).find(visible);
  const sections = {};
- for (const e of document.querySelectorAll('h2,h3,h4,dt,th')) {
-   if (!visible(e)) continue;
+ for (const e of document.querySelectorAll('h1,h2,h3,h4,dt,th')) {
+   if (e === title || !visible(e)) continue;
    const label = (e.textContent || '').trim();
    let texts = [];
    for (let n = e.nextElementSibling; n && !n.matches('h1,h2,h3,h4,dt,th'); n = n.nextElementSibling) {
@@ -56,7 +65,7 @@ DETAIL = r"""() => {
    if (e.matches('th')) texts = [e.nextElementSibling?.innerText || ''];
    sections[label] = texts.join('\n');
  }
- return {title: Array.from(document.querySelectorAll('h1')).filter(visible)[0]?.innerText || '', sections};
+ return {title: title?.innerText || '', sections};
 }"""
 
 

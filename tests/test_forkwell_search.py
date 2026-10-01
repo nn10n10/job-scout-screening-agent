@@ -163,3 +163,88 @@ def test_malformed_snapshot_fails_closed():
     a.page.evaluate.return_value = None
     with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('求人一覧', 1)
     assert exc.value.reason == 'PARSE_ERROR'
+
+
+def fictional_detail(nodes):
+    """Execute the actual DETAIL JS against a fictional, browser-free DOM double."""
+    import json
+    import shutil
+    import subprocess
+    from scout_agent.forkwell_discovery import DETAIL
+
+    node = shutil.which('node')
+    assert node, 'Node is required to verify the actual detail extraction script'
+    script = r'''
+const nodes = INPUT.map(([tag, text, shown = true]) => ({
+  tag, textContent: text, innerText: text, shown,
+  getClientRects() { return this.shown ? [1] : []; },
+  matches(selector) { return selector.split(',').includes(this.tag); }
+}));
+nodes.forEach((n, i) => n.nextElementSibling = nodes[i + 1] || null);
+global.getComputedStyle = () => ({visibility: 'visible'});
+global.document = {
+  querySelectorAll(selector) { return nodes.filter(n => n.matches(selector)); },
+  get body() { throw new Error('Body fallback is forbidden'); }
+};
+'''.replace('INPUT', json.dumps(nodes))
+    result = subprocess.run([node, '-e', script + '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'],
+                            capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def test_detail_h1_sections_and_skill_experience_labels():
+    data = fictional_detail([
+        ('h1', 'Hidden fictional title', False),
+        ('h1', 'Fictional SRE'), ('p', 'Title introduction'),
+        ('h1', '業務内容'), ('p', '架空基盤の運用'),
+        ('h1', '必須スキル/経験'), ('p', 'Linux'),
+        ('h2', '歓迎スキル/経験'), ('p', 'Terraform'),
+        ('h2', 'Unapproved heading'), ('p', 'Unrelated text'),
+    ])
+    assert data['title'] == 'Fictional SRE'
+    assert 'Fictional SRE' not in data['sections']
+    assert 'Hidden fictional title' not in data['sections']
+    fields = parse_fields(data['sections'], data['title'])
+    assert fields == {'title': 'Fictional SRE', 'responsibilities': '架空基盤の運用',
+                      'required': 'Linux', 'preferred': 'Terraform'}
+
+
+@pytest.mark.parametrize('label', ['仕事概要', '求人概要'])
+def test_detail_summary_responsibilities_fallback(label):
+    data = fictional_detail([('h1', 'Fictional SRE'), ('h2', label), ('p', '架空基盤の設計')])
+    assert parse_fields(data['sections'], data['title'])['responsibilities'] == '架空基盤の設計'
+
+
+@pytest.mark.parametrize('labels', [('求人概要', '業務内容'), ('業務内容', '求人概要')])
+def test_detail_specific_duties_win_in_either_dom_order(labels):
+    content = {'求人概要': '架空企業の紹介', '業務内容': '架空基盤の運用'}
+    nodes = [('h1', 'Fictional SRE')]
+    for label in labels:
+        nodes.extend([('h2', label), ('p', content[label])])
+    data = fictional_detail(nodes)
+    assert parse_fields(data['sections'], data['title'])['responsibilities'] == '架空基盤の運用'
+
+
+@pytest.mark.parametrize('title', ['業務内容', 'Fictional SRE'])
+def test_detail_title_and_unapproved_headings_cannot_supply_duties(title):
+    data = fictional_detail([('h1', title), ('p', 'Introductory text'),
+                             ('h2', '業務内容について'), ('p', 'Not an allowed label'),
+                             ('h2', '開発環境'), ('p', 'AWS')])
+    assert title not in data['sections']
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    snapshot = {'ready': 'complete', 'canonical': job.url}
+    a.page.evaluate.side_effect = [snapshot, data, snapshot]
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == 'RESPONSIBILITIES_MISSING'
+
+
+@pytest.mark.parametrize('required', ['必須スキル', '必須スキル/経験'])
+@pytest.mark.parametrize('preferred', ['歓迎スキル', '歓迎スキル/経験'])
+def test_detail_fixed_skill_aliases(required, preferred):
+    data = fictional_detail([('h1', 'Fictional SRE'), ('h2', '仕事内容'), ('p', '架空基盤の運用'),
+                             ('h1', required), ('p', 'Linux'), ('h2', preferred), ('p', 'Terraform')])
+    fields = parse_fields(data['sections'], data['title'])
+    assert fields['required'] == 'Linux'
+    assert fields['preferred'] == 'Terraform'
