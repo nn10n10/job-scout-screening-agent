@@ -1,8 +1,8 @@
 # Job Scout Screening Agent
 
-这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell 已提供主动 Search 适配；其 Scout 消息与 LAPRAS 网页适配器尚未实现。不会自动登录、応募或发送消息。
+这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell 已提供主动 Search 适配；Forkwell / LAPRAS 的 Scout 消息适配器尚未实现。不会自动登录、応募或发送消息。
 
-Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green 或 Forkwell 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
+Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green、Forkwell 或 LAPRAS 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform forkwell`。
 该 probe 只读取既有标签页，不导航、点击或刷新。JSON 包含 `page_kind` 候选、职位链接数量和脱敏路径、
 分页路径与固定 query-key（`page`、`p`、`cursor`、`offset`）、next/prev/page-number 候选、
@@ -364,7 +364,7 @@ Codex 失败仅输出安全 category，不输出 JD/raw stderr。成功批次保
 代码验证只使用虚构数据和 mocked 模型；真实验收由用户本机已有 Chrome CDP 连续两次小预算 AWS Search 完成，
 确认 page 1 固定、深页前进、KNOWN 不重复大量送模型。真实验收前不发送 `[SUPERVISOR][APPROVED]`，Bridge 不 merge。
 
-### WebUI 增量 Search（Green / Forkwell）
+### WebUI 增量 Search（Green / Forkwell / LAPRAS）
 
 安全停止时，本轮状态显示 `failed_source`、`failed_page` 与固定枚举的
 `safe_reason`，用于定位最后进入的 source/page；这不表示该页已处理完成。
@@ -390,3 +390,6 @@ AI 排序仍为 TARGET → POSSIBLE → DROP，人工状态与 AI verdict 独立
 首次明确状态 POST 或 writable SearchStore migration 才会创建本地状态表。
 NEW 0、KNOWN 增加也是正常增量结果。失败只显示安全类别，可稍后重试并复用已有缓存。
 服务仅绑定 127.0.0.1，POST 要求页面随机 CSRF token，不自动打开浏览器。
+
+
+LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/search` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。

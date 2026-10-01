@@ -86,3 +86,37 @@ CLI smoke 退出码 0，stdout 包含 `{green,forkwell}`、`单次选择 Green �
 最终全量退出码 0，`715 passed, 1 warning in 36.29s`；failed/skipped/xfailed：none。
 warning 为既有 `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
 全部模型调用均 mock，SQLite 仅虚构临时 fixture，真实浏览器/数据库/招聘网站/付费模型访问 none。
+
+
+LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/search` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。
+
+
+### LAPRAS 阶段 A 定向证据与阶段 B 边界
+
+Supervisor 提供的脱敏 live 证据：`/jobs/search` 为 list，13 个 job links，
+路径类型为 `/jobs/:id` 与 `/jobs/:segment`；numeric_path_segment 是唯一稳定 ID。
+未发现 pagination links、query keys 或候选结构，pagination_mode=unknown；
+loading complete、busy=false、SPA=false。列表标题命中 年収 / 開発環境 / 雇用形態。
+Numeric detail canonical 为同 `/jobs/:id`，稳定 ID 位于路径 segment 2；
+标题命中 勤務地 / 給与 / 開発環境 / 雇用形態。Slug detail 无稳定路径 ID 或 canonical，
+因此不能用于持久化身份。职责仍需命中固定 allowlist，否则 fail-closed。
+
+本次真实浏览器、真实数据库、招聘网站、网络、付费模型访问：none。
+新增测试使用 fictional DOM / snapshot、mock classifier 与 worktree 内临时 SQLite。
+直接 focused 命令：
+`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m pytest -q --basetemp=.pytest-lapras-focus tests/test_lapras_search.py tests/test_web_search_config.py::test_lapras_config_survives_reload`
+退出码 0，`34 passed, 1 warning in 0.59s`。
+随后补充 canonical、title、GET 不 migration、CLI source 与安全遥测用例；
+最终全量使用前述仅测试进程 bounded_select 方案，参数为
+`pytest.main(['-q', '--basetemp=.pytest-lapras-final-full'])`。
+普通全量在现有 TestClient 跨线程等待处中止（退出码 130，无最终摘要），
+此 workaround 不代表普通 pytest 在 sandbox 中通过。
+CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent search --help`，
+退出码 0，stdout 包含 `{green,forkwell,lapras}` 和来源 `求人検索`；未实际启动 Search。
+`git diff --check` 退出码 0，无输出。
+
+最终全量退出码 0：`791 passed, 1 warning in 41.46s`；failed/skipped/xfailed：none。
+定向最终验证同一 bounded_select 方案运行 `tests/test_lapras_search.py tests/test_web_search_config.py`，
+退出码 0：`44 passed, 1 warning in 2.41s`。warning 均为既有
+`StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
+Green/Forkwell 分页、缓存、历史状态回归包含在全量验证中。
