@@ -253,6 +253,7 @@ class SearchCodex(CodexClassifier):
 def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
                max_model_jobs=20, batch_size=8, pages_per_keyword=2, early_stop=15,
                policy_version=POLICY_VERSION, coverage_pages=2, max_depth=15, progress=None):
+    supports_pagination = getattr(adapter, "supports_pagination", True)
     incremental = pages_per_keyword is None
     if coverage_pages < 1 or max_depth < 2:
         raise ValueError("coverage-pages 必须为正整数，max-depth 至少为 2。")
@@ -289,8 +290,10 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
     stop = False
     for keyword in keywords:
         source_key = source_identity(getattr(adapter, "platform_key", "green"), keyword)
-        cursor = store.source_cursor(source_key, max_depth)
-        if incremental:
+        cursor = store.source_cursor(source_key, max_depth) if supports_pagination else 1
+        if not supports_pagination:
+            pages = [1]
+        elif incremental:
             stats['cursors'][keyword] = {'before': cursor, 'after': cursor}
             pages = [1] + list(range(cursor, min(max_depth + 1, cursor + coverage_pages)))
         else:
@@ -393,7 +396,7 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
             # remaining candidates might meet the early-stop threshold.
             if stop or stats['TARGET'] + stats['POSSIBLE'] + len(pending) >= early_stop:
                 flush()
-            if incremental and page_complete:
+            if incremental and supports_pagination and page_complete:
                 flush()
                 if page > 1 or not cards:
                     wrapped = not cards or page >= max_depth
@@ -448,8 +451,24 @@ def search_command(args, settings, *, adapter=None):
         print(f'Search progress: {label} page {page}', flush=True)
 
     try:
+        if adapter is None:
+            from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+            from scout_agent.lapras_search import LaprasSearchAdapter
+            adapter = {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
+                       'lapras': LaprasSearchAdapter}[getattr(args, 'platform', 'green')]()
         return _search_command(args, settings, adapter=adapter, progress=progress)
     except (GreenSearchDOMPending, ValueError, Error) as exc:
+        if (isinstance(exc, GreenSearchDOMPending)
+                and getattr(args, 'platform', 'green') == 'lapras'
+                and getattr(adapter, 'last_safe_detail_diagnostic', None) is not None):
+            from scout_agent.lapras_structure import sanitize
+            try:
+                diagnostic = sanitize(adapter.last_safe_detail_diagnostic)
+            except Exception:
+                pass
+            else:
+                print('LAPRAS safe detail diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
+                      file=sys.stderr, flush=True)
         reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
                   'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else
                   'PLAYWRIGHT_ERROR' if isinstance(exc, Error) else 'PARSE_ERROR')
@@ -460,9 +479,10 @@ def search_command(args, settings, *, adapter=None):
             reason = 'UNKNOWN'
         # Context comes only from validated discovery labels, never exception text.
         from scout_agent.forkwell_discovery import SOURCES as FORKWELL_SOURCES
-        if source not in (*KEYWORDS, *FORKWELL_SOURCES):
+        from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
+        if source not in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES):
             source, number = 'NONE', 0
-        platform_label = 'Forkwell' if getattr(args, 'platform', 'green') == 'forkwell' else 'Green'
+        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS'}.get(getattr(args, 'platform', 'green'), 'Green')
         print(f'{platform_label} safety stop: source={source} page={number} category={reason}',
               file=sys.stderr, flush=True)
         return 1
@@ -472,7 +492,9 @@ def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.browser.manager import BrowserManager
     from scout_agent.storage.db import Database
     from scout_agent.forkwell_discovery import ForkwellSearchAdapter
-    adapter = adapter or (ForkwellSearchAdapter() if getattr(args, 'platform', 'green') == 'forkwell' else GreenSearchAdapter())
+    from scout_agent.lapras_search import LaprasSearchAdapter
+    adapter = adapter or {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
+                          'lapras': LaprasSearchAdapter}[getattr(args, 'platform', 'green')]()
     adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
     sources = args.keyword or getattr(adapter, 'source_labels', KEYWORDS)

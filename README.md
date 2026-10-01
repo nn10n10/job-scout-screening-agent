@@ -1,14 +1,29 @@
 # Job Scout Screening Agent
 
-这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell 已提供主动 Search 适配；其 Scout 消息与 LAPRAS 网页适配器尚未实现。不会自动登录、応募或发送消息。
+这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell 已提供主动 Search 适配；Forkwell / LAPRAS 的 Scout 消息适配器尚未实现。不会自动登录、応募或发送消息。
 
-Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green 或 Forkwell 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
+Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green、Forkwell 或 LAPRAS 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform forkwell`。
 该 probe 只读取既有标签页，不导航、点击或刷新。JSON 包含 `page_kind` 候选、职位链接数量和脱敏路径、
 分页路径与固定 query-key（`page`、`p`、`cursor`、`offset`）、next/prev/page-number 候选、
 详情页 canonical 路径模式与 stable-ID segment 位置（从 1 开始，忽略空 segment），以及固定字段标题命中。
 不输出真实 ID、公司名、正文或 query value；登录失效仍返回 `NEEDS_LOGIN`。
 adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，使用数字职位 ID 和严格 URL 白名单；详情仅解析语义标题/字段，必须有同职位 canonical、职位标题和职责。缺字段、陌生路由、加载中、无有效链接均安全停止，不推定空结果。登录失效输出 `NEEDS_LOGIN`，只允许手动登录；不自动 OAuth、不回退 legacy 浏览器。本轮仅完成虚构离线验证，真实 DOM 解析与分页稳定性仍待授权 live 验收。
+
+LAPRAS 已接入 Search adapter、CLI Search 和 WebUI，读取 `/jobs/home` 第一页及 numeric 职位详情。列表尚无 numeric 链接时，仅在同页最多等待 4 次、每次 500ms 并重新读取；耗尽仍安全停止，不推定空结果。详情结构合法但缺标题或职责时，同页最多重读 4 次，每次等待 500ms，并校验导航与同职位 canonical；耗尽才输出脱敏诊断并安全停止。document.title 单独存在不代表详情就绪。WebUI 隐藏 LAPRAS 分页数字字段，固定扫描第一页；live 验收待 supervisor 确认。
+在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
+`python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
+无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
+输出 list/detail/other 候选、职位链接计数及路径模式、同职位 canonical 模式、数字 ID 段位置（从 1 开始）、
+分页路径及固定 query-key、next/prev/page-number/load-more 候选、固定白名单字段标题及加载/安全失败状态。
+`/jobs/:segment` 仅为路由候选，不认定 slug 是稳定 ID；load-more 只读取固定标签或链接候选，不点击。
+真实 ID、公司名、JD、query value、个人资料和认证信息均不输出。登录失效保留 `NEEDS_LOGIN`，需手动登录。
+仅在 LAPRAS numeric detail `/jobs/<id>` 上追加 `lapras_structure`：固定 label、tag（非白名单为 null）、固定 role/semantic_role、最近三层 ancestor、正文及下一个固定 label 的结构关系候选。
+存在 exact 仕事内容/業務内容/職務内容 与 exact 概要 时，追加概要及 parent descriptor、immediate next sibling 的可见性/正文存在性/子节点数量桶，以及最多 8 个 direct child、12 个 DFS descendant 的脱敏结构；不输出正文、任意 heading 文本或 class/id/data-*。概要无 next sibling 时输出 null/空数组。
+关系枚举为 same-parent-next-sibling / same-parent-following-sibling / ancestor-next-sibling / nested-next-block / tab-panel；候选不代表正式 parser selector。
+title 只输出 `visible_h1_count`、`has_og_title`、`has_document_title`。未 exact-match「仕事内容」时，额外输出 normalized text 以该 label 开头的元素 tag 与 boolean。
+不输出 title、正文、class/id/data-* 或任意属性值（固定 role 除外）；每页最多 100 个 label 和 100 个 prefix 元素。
+本轮修复详情就绪重读，正式职责 parser selector 与边界规则未变。最新诊断仅出现 document.title，详情渲染竞态仍需 supervisor live 验收；分页未知时不猜 selector。
 
 ## 架构
 
@@ -354,7 +369,7 @@ Codex 失败仅输出安全 category，不输出 JD/raw stderr。成功批次保
 代码验证只使用虚构数据和 mocked 模型；真实验收由用户本机已有 Chrome CDP 连续两次小预算 AWS Search 完成，
 确认 page 1 固定、深页前进、KNOWN 不重复大量送模型。真实验收前不发送 `[SUPERVISOR][APPROVED]`，Bridge 不 merge。
 
-### WebUI 增量 Search（Green / Forkwell）
+### WebUI 增量 Search（Green / Forkwell / LAPRAS）
 
 安全停止时，本轮状态显示 `failed_source`、`failed_page` 与固定枚举的
 `safe_reason`，用于定位最后进入的 source/page；这不表示该页已处理完成。
@@ -380,3 +395,6 @@ AI 排序仍为 TARGET → POSSIBLE → DROP，人工状态与 AI verdict 独立
 首次明确状态 POST 或 writable SearchStore migration 才会创建本地状态表。
 NEW 0、KNOWN 增加也是正常增量结果。失败只显示安全类别，可稍后重试并复用已有缓存。
 服务仅绑定 127.0.0.1，POST 要求页面随机 CSRF token，不自动打开浏览器。
+
+
+LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/home` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。
