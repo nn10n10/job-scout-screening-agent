@@ -287,11 +287,12 @@ def semantic_dom(nodes, og='', title=''):
     from scout_agent.lapras_search import DETAIL
     script = """
 const fixture = FIXTURE;
-function build([tag,text,children=[],hidden=false]) {
- const node = {tag, textContent:text, innerText:text, hidden,
+function build([tag,text,children=[],hidden=false,directText]) {
+ const node = {tag, nodeType:1, textContent:text, innerText:text, hidden,
  getClientRects(){return this.hidden ? [] : [1]},
  matches(s){return s.split(',').includes(this.tag)}};
  node.children = children.map(build);
+ node.childNodes = [{nodeType:3, textContent:directText ?? (children.length ? '' : text)}, ...node.children];
  node.children.forEach((n,i)=>{n.parentElement=node;n.nextElementSibling=node.children[i+1]||null});
  node.querySelectorAll=s=>flatten(node.children).filter(n=>n.matches(s));
  return node;
@@ -385,3 +386,38 @@ def test_responsibilities_ancestor_summary_preserves_direct():
 
 def test_summary_without_responsibilities_label():
     assert 'responsibilities' not in semantic_dom([['h4', '概要'], ['p', '架空基盤の運用']])
+
+
+@pytest.mark.parametrize('intro', ['h1', 'h2', 'h3', '[role=heading]'])
+def test_summary_nested_intro_once(intro):
+    body = ['div', '', [['div', '', [[intro, 'Fictional intro'],
+        ['p', '架空設計'], ['p', '架空運用'], ['p', '架空改善']]]]]
+    nodes = ancestor_summary_dom(3)
+    nodes[1][2][0][2][1] = body
+    assert semantic_dom(nodes)['responsibilities'] == '架空設計\n架空運用\n架空改善'
+
+
+@pytest.mark.parametrize('children,expected', [
+    ([['h2', '必須要件'], ['p', 'EXCLUDED']], None),
+    ([['h1', 'Intro'], ['h3', 'Second intro'], ['p', 'EXCLUDED']], None),
+    ([['h1', 'Intro'], ['p', '架空設計'], ['h6', 'Boundary'], ['p', 'EXCLUDED']], '架空設計'),
+    ([['p', '架空設計'], ['p', '架空運用']], '架空設計\n架空運用'),
+    ([['ul', '', [['li', '架空設計'], ['li', '架空運用']]]], '架空設計\n架空運用'),
+    ([['p', 'HIDDEN', [], True], ['p', '架空設計']], '架空設計'),
+    ([['div', '架空設計', [['p', '架空設計']]]], '架空設計'),
+    ([['p', '架空設計'], ['span', '給与'], ['p', 'EXCLUDED']], '架空設計'),
+    ([['h2', '必須'], ['p', 'EXCLUDED']], None),
+    ([['h2', '歓迎'], ['p', 'EXCLUDED']], None),
+    ([['p', '']], None),
+    ([['p', '架空設計', [['span', '架空運用']], False, '架空設計']], '架空設計\n架空運用'),
+])
+def test_summary_local_document_order_and_boundaries(children, expected):
+    nodes = ancestor_summary_dom(3, following=[['p', 'OUTSIDE EXCLUDED']])
+    nodes[1][2][0][2][1] = ['div', '', [['div', '', children]]]
+    assert semantic_dom(nodes).get('responsibilities') == expected
+
+
+def test_summary_intro_cannot_cross_immediate_sibling():
+    nodes = ancestor_summary_dom(3, following=[['p', 'OUTSIDE EXCLUDED']])
+    nodes[1][2][0][2][1] = ['div', '', [['h1', 'Fictional intro']]]
+    assert 'responsibilities' not in semantic_dom(nodes)

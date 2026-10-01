@@ -92,15 +92,25 @@ DETAIL = r"""() => {
  };
  const responsibilityLabels = ['仕事内容', '業務内容', '職務内容'];
  const summaryHeadings = 'h1,h2,h3,h4,h5,h6,[role=heading]';
- const collectSummary = (node, texts) => {
+ const summaryLabels = [...labels, '概要', '必須', '歓迎'];
+ const collectSummary = (node, texts, state) => {
    if (!visible(node)) return false;
-   if (labelOf(node) || node.matches(summaryHeadings + ',dt,th')) return true;
-   if (node.children?.length) {
-     for (const child of node.children) {
-       if (collectSummary(child, texts)) return true;
+   if (summaryLabels.includes(text(node))) return true;
+   if (node.matches(summaryHeadings)) {
+     if (texts.length || state.introSkipped) return true;
+     state.introSkipped = true;
+     return false;
+   }
+   if (node.matches('dt,th')) return true;
+   // Walk local child nodes in document order; never use aggregate innerText.
+   for (const child of node.childNodes) {
+     if (child.nodeType === 3) {
+       const value = (child.textContent || '').trim();
+       if (summaryLabels.includes(value)) return true;
+       if (value) texts.push(value);
+     } else if (child.nodeType === 1) {
+       if (collectSummary(child, texts, state)) return true;
      }
-   } else {
-     texts.push(text(node));
    }
    return false;
  };
@@ -115,9 +125,8 @@ DETAIL = r"""() => {
      for (const heading of candidates) {
        if (!visible(heading) || !heading.matches(summaryHeadings) || text(heading) !== '概要') continue;
        const texts = [];
-       for (let n = heading.nextElementSibling; n; n = n.nextElementSibling) {
-         if (collectSummary(n, texts)) break;
-       }
+       const body = heading.nextElementSibling;
+       if (body) collectSummary(body, texts, {introSkipped: false});
        const value = texts.filter(Boolean).join('\n');
        if (value) return value;
      }
