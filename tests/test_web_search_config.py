@@ -95,9 +95,25 @@ def test_search_controls_labels_structure_and_styles(tmp_path):
         def __init__(self):
             super().__init__()
             self.tags = []
+            self.labels = []
+            self.current_label = None
 
         def handle_starttag(self, tag, attrs):
-            self.tags.append((tag, dict(attrs)))
+            attrs = dict(attrs)
+            self.tags.append((tag, attrs))
+            if tag == 'label':
+                self.current_label = {'text': '', 'inputs': []}
+            elif tag == 'input' and self.current_label is not None:
+                self.current_label['inputs'].append(attrs)
+
+        def handle_data(self, data):
+            if self.current_label is not None:
+                self.current_label['text'] += data
+
+        def handle_endtag(self, tag):
+            if tag == 'label' and self.current_label is not None:
+                self.labels.append(self.current_label)
+                self.current_label = None
 
     app = create_app(tmp_path / 'fictional.db', search_runner=lambda *args: 0)
     with TestClient(app) as client:
@@ -107,10 +123,26 @@ def test_search_controls_labels_structure_and_styles(tmp_path):
         assert label in html
     parser = ControlsParser()
     parser.feed(html)
-    form = next(attrs for tag, attrs in parser.tags if tag == 'form')
+    form = next(attrs for tag, attrs in parser.tags
+                if tag == 'form' and attrs.get('id') == 'search-form')
     assert form['class'] == 'search-controls'
+    assert 'filters' not in form['class'].split()
+    expected_bindings = {
+        'coverage_pages': '每轮深页数',
+        'max_depth': '最大扫描页',
+        'max_jobs': '详情读取上限',
+        'max_model_jobs': 'AI 评价上限',
+        'codex_batch_size': 'Codex 批次大小',
+    }
+    for name, text in expected_bindings.items():
+        labels = [label for label in parser.labels
+                  if any(field.get('name') == name for field in label['inputs'])]
+        assert len(labels) == 1, name
+        assert labels[0]['text'].strip().startswith(text), name
+        assert len(labels[0]['inputs']) == 1, name
     numbers = {attrs['name']: attrs for tag, attrs in parser.tags
                if tag == 'input' and attrs.get('type') == 'number'}
+    assert set(numbers) == set(expected_bindings)
     assert set(numbers) == set(LIMITS)
     for name, (default, low, high) in LIMITS.items():
         assert [numbers[name][key] for key in ['value', 'min', 'max']] == list(map(str, [default, low, high]))
