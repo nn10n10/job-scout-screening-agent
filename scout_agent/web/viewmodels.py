@@ -191,14 +191,18 @@ def search_cards(results, user_states=None):
     cards = []
     for job, result in results:
         try:
-            url = Job.from_url(job.url, {}).url
+            if job.platform == 'forkwell':
+                from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+                url = ForkwellSearchAdapter().validate_job(job)
+            else:
+                url = Job.from_url(job.url, {}).url
         except (ValueError, TypeError):
             url = None
         def preview(value, limit=72):
             text = ' '.join(str(value or '').split())
             return text if len(text) <= limit else text[:limit - 1] + '…'
         cards.append(dict(
-            job_id=job.job_id, verdict=result.verdict,
+            job_id=job.job_id, verdict=result.verdict, platform_label=('Forkwell' if job.platform == 'forkwell' else 'Green') if url else '未知平台',
             user_status=(user_states or {}).get(job.job_id, 'ACTIVE'),
             company=job.fields.get('company'), title=job.fields.get('title'),
             salary_preview=preview(job.fields.get('salary'), 40),

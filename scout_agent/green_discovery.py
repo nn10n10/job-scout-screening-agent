@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass, field
 from contextlib import contextmanager
 from enum import Enum
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -11,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 
 from scout_agent.platforms.green import JOB_PATH, parse_job_card
+from scout_agent.search_platforms import FIELDS, Job
 
 ORIGIN = 'https://www.green-japan.com'
 SOURCES = {
@@ -80,25 +80,8 @@ def valid_source_redirect(url, label, page=1):
     return True
 
 
-FIELDS = ('company', 'title', 'salary', 'location', 'remote', 'responsibilities', 'required', 'preferred', 'technology')
 
 
-@dataclass
-class Job:
-    job_id: str
-    url: str
-    fields: dict[str, str]
-    matched_keywords: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_url(cls, url, fields):
-        if not isinstance(url, str) or not url or re.search(r"[\s\x00-\x1f\x7f]", url):
-            raise ValueError("异常 Green 职位 URL，已安全停止。")
-        parts = urlsplit(urljoin(ORIGIN, url))
-        if parts.scheme != 'https' or parts.netloc != 'www.green-japan.com' or not JOB_PATH.fullmatch(parts.path):
-            raise ValueError('非 Green 职位 URL，已安全停止。')
-        ids = parts.path.split('/')
-        return cls(f'{ids[2]}:{ids[4]}', ORIGIN + parts.path, fields)
 
 
 def pagination_url(base, page):
@@ -125,6 +108,18 @@ class GreenSearchDOMPending(RuntimeError):
 
 
 class GreenSearchAdapter:
+    platform_key = "green"
+    source_labels = KEYWORDS
+
+    def source_url(self, label, page=1):
+        return source_url(label, page)
+
+    def validate_job(self, job):
+        checked = Job.from_url(job.url, {})
+        if job.platform != self.platform_key or checked.job_id != job.job_id:
+            raise ValueError("职位平台或 ID 不匹配，已安全停止。")
+        return checked.url
+
     def ensure_verified(self):
         """Static safety implementation is enabled; this is not live verification."""
         return None
