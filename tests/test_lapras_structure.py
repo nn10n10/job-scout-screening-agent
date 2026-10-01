@@ -23,7 +23,9 @@ class Element {
  }
  get textContent() { return this.ownText + this.children.map(c => c.textContent).join(''); }
  getAttribute(name) { return name === 'role' ? this.role : 'FICTIONAL_SECRET_ATTRIBUTE'; }
- getClientRects() { return [1]; }
+ getClientRects() { return this.role === 'hidden' ? [] : [1]; }
+ get childNodes() { return [{nodeType: 3, textContent: this.ownText}, ...this.children]; }
+ querySelectorAll() { const out = []; const visit = e => { out.push(e); e.children.forEach(visit); }; this.children.forEach(visit); return out; }
  get nextElementSibling() {
   const siblings = this.parentElement?.children || [];
   return siblings[siblings.indexOf(this) + 1] || null;
@@ -109,3 +111,73 @@ def test_numeric_only_read_only_dispatch(platform, url, script):
 def test_login_discards_structure():
     row = evidence('lapras', 'https://lapras.com/jobs/123', {'login': True, 'lapras_structure': {'labels': ['secret']}})
     assert row == {'platform': 'lapras', 'safe_failure_category': 'NEEDS_LOGIN'}
+
+
+@pytest.mark.parametrize('block,tag,count,heading,fixed', [
+    ("e('p', 'FICTIONAL_SECRET_BODY')", 'p', '0', False, False),
+    ("e('div', '', null, [e('p', 'FICTIONAL_SECRET_BODY')])", 'div', '1', False, False),
+    ("e('div', '', null, [e('h4', 'FICTIONAL_SECRET_HEADING'), e('p', 'FICTIONAL_SECRET_BODY')])", 'div', '2-5', True, False),
+    ("e('div', '', null, [e('h4', '必須要件'), e('p', 'FICTIONAL_SECRET_BODY')])", 'div', '2-5', True, True),
+    ("e('div', '', null, [e('section', '', null, [e('div', '', null, [e('p', 'FICTIONAL_SECRET_BODY')])])])", 'div', '1', False, False),
+    ("e('div', '', 'hidden', [e('p', 'FICTIONAL_SECRET_BODY', 'hidden')])", 'div', '1', False, False),
+])
+def test_summary_content_shapes(block, tag, count, heading, fixed):
+    result = sanitize(run_tree("e('main', '', null, [e('h2', '仕事内容'), e('h3', '概要'), " + block + "] )"))
+    assert result['summary_node']['tag'] == 'h3'
+    assert result['summary_parent']['tag'] == 'main'
+    sibling = result['immediate_next_sibling']
+    assert sibling['tag'] == tag
+    assert sibling['child_count_bucket'] == count
+    assert sibling['contains_any_heading'] is heading
+    assert sibling['contains_fixed_label'] is fixed
+    assert sibling['has_direct_nonempty_text'] is (tag == 'p')
+    assert sibling['has_descendant_nonempty_text'] is (tag == 'div')
+    assert sibling['visible'] is ('hidden' not in block)
+    assert len(result['immediate_next_sibling_children']) == (0 if tag == 'p' else (2 if count == '2-5' else 1))
+    assert all(i['visible'] for i in result['first_descendant_shapes'])
+    if 'hidden' in block:
+        assert result['first_descendant_shapes'] == []
+    if heading:
+        assert result['first_descendant_shapes'][0]['is_heading']
+        assert result['first_descendant_shapes'][0]['fixed_label'] == ('必須要件' if fixed else None)
+
+
+def test_summary_without_sibling_and_exact_label_gate():
+    result = sanitize(run_tree("e('main', '', null, [e('h2', '業務内容'), e('h3', '概要')])"))
+    assert result['immediate_next_sibling'] is None
+    assert result['immediate_next_sibling_children'] == []
+    assert result['first_descendant_shapes'] == []
+    for label in ('FICTIONAL_SECRET', '仕事内容 FICTIONAL_SECRET'):
+        result = sanitize(run_tree("e('main', '', null, [e('h2', '" + label + "'), e('h3', '概要'), e('p', 'FICTIONAL_SECRET')])"))
+        assert 'summary_node' not in result
+
+
+def test_summary_sanitizer_rebuilds_all_fields_and_caps_arrays():
+    secret = {'tag': 'FICTIONAL_SECRET', 'role': 'FICTIONAL_SECRET',
+              'semantic_role': 'FICTIONAL_SECRET', 'class': 'FICTIONAL_SECRET',
+              'id': 'FICTIONAL_SECRET', 'data-secret': 'FICTIONAL_SECRET',
+              'text': 'FICTIONAL_SECRET', 'heading_text': 'FICTIONAL_SECRET',
+              'fixed_label': 'FICTIONAL_SECRET', 'visible': 'FICTIONAL_SECRET',
+              'is_heading': True, 'has_direct_nonempty_text': 'FICTIONAL_SECRET',
+              'has_descendant_nonempty_text': True, 'child_count_bucket': 'FICTIONAL_SECRET'}
+    result = sanitize({'labels': [{'label': '職務内容'}, {'label': '概要'}],
+                       'summary_node': secret, 'summary_parent': secret,
+                       'immediate_next_sibling': secret,
+                       'immediate_next_sibling_children': [secret] * 20,
+                       'first_descendant_shapes': [secret] * 20})
+    assert 'FICTIONAL_SECRET' not in json.dumps(result)
+    assert len(result['immediate_next_sibling_children']) == 8
+    assert len(result['first_descendant_shapes']) == 12
+    assert result['first_descendant_shapes'][0]['is_heading'] is True
+    assert result['first_descendant_shapes'][0]['visible'] is False
+
+
+def test_probe_dfs_order_and_limits():
+    nested = "e('section', '', null, [e('span', '', null, [e('p', 'FICTIONAL_SECRET')])])"
+    children = [nested] + ["e('p', 'FICTIONAL_SECRET')"] * 15
+    raw = run_tree("e('main', '', null, [e('h2', '職務内容'), e('h3', '概要'), e('div', '', null, [" + ','.join(children) + "])])")
+    assert raw['immediate_next_sibling']['child_count_bucket'] == '6+'
+    assert len(raw['immediate_next_sibling_children']) == 8
+    assert len(raw['first_descendant_shapes']) == 12
+    assert [i['tag'] for i in raw['first_descendant_shapes'][:3]] == ['section', 'span', 'p']
+    assert sanitize(raw)['first_descendant_shapes'] == raw['first_descendant_shapes']

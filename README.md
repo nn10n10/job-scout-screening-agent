@@ -19,6 +19,7 @@ LAPRAS 已接入 Search adapter、CLI Search 和 WebUI；live Search 当前因 `
 `/jobs/:segment` 仅为路由候选，不认定 slug 是稳定 ID；load-more 只读取固定标签或链接候选，不点击。
 真实 ID、公司名、JD、query value、个人资料和认证信息均不输出。登录失效保留 `NEEDS_LOGIN`，需手动登录。
 仅在 LAPRAS numeric detail `/jobs/<id>` 上追加 `lapras_structure`：固定 label、tag（非白名单为 null）、固定 role/semantic_role、最近三层 ancestor、正文及下一个固定 label 的结构关系候选。
+存在 exact 仕事内容/業務内容/職務内容 与 exact 概要 时，追加概要及 parent descriptor、immediate next sibling 的可见性/正文存在性/子节点数量桶，以及最多 8 个 direct child、12 个 DFS descendant 的脱敏结构；不输出正文、任意 heading 文本或 class/id/data-*。概要无 next sibling 时输出 null/空数组。
 关系枚举为 same-parent-next-sibling / same-parent-following-sibling / ancestor-next-sibling / nested-next-block / tab-panel；候选不代表正式 parser selector。
 title 只输出 `visible_h1_count`、`has_og_title`、`has_document_title`。未 exact-match「仕事内容」时，额外输出 normalized text 以该 label 开头的元素 tag 与 boolean。
 不输出 title、正文、class/id/data-* 或任意属性值（固定 role 除外）；每页最多 100 个 label 和 100 个 prefix 元素。
