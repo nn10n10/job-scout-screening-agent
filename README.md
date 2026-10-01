@@ -10,6 +10,16 @@ Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增�
 不输出真实 ID、公司名、正文或 query value；登录失效仍返回 `NEEDS_LOGIN`。
 adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，使用数字职位 ID 和严格 URL 白名单；详情仅解析语义标题/字段，必须有同职位 canonical、职位标题和职责。缺字段、陌生路由、加载中、无有效链接均安全停止，不推定空结果。登录失效输出 `NEEDS_LOGIN`，只允许手动登录；不自动 OAuth、不回退 legacy 浏览器。本轮仅完成虚构离线验证，真实 DOM 解析与分页稳定性仍待授权 live 验收。
 
+LAPRAS 当前仅提供 TASK-008 阶段 A 定向调查，尚未接入 Search adapter、CLI Search 或 WebUI。
+在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
+`python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
+无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
+输出 list/detail/other 候选、职位链接计数及路径模式、同职位 canonical 模式、数字 ID 段位置（从 1 开始）、
+分页路径及固定 query-key、next/prev/page-number/load-more 候选、固定白名单字段标题及加载/安全失败状态。
+`/jobs/:segment` 仅为路由候选，不认定 slug 是稳定 ID；load-more 只读取固定标签或链接候选，不点击。
+真实 ID、公司名、JD、query value、个人资料和认证信息均不输出。登录失效保留 `NEEDS_LOGIN`，需手动登录。
+阶段 A 完成后等待 supervisor 审阅真实脱敏 probe 证据，再实施正式 adapter；分页未知时不猜 selector。
+
 ## 架构
 
 `PlatformAdapter → Scout → SQLite 去重 → Mock/Codex/Gemini Classifier → Evaluation → HTML/JSON 报告`。

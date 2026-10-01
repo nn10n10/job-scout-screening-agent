@@ -32,6 +32,10 @@ SNAPSHOT = """() => {
  const labels = %s;
  return {
    canonical: document.querySelector('link[rel="canonical"]')?.href || null,
+   controls: Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible)
+     .map(e => (e.textContent || '').trim())
+     .filter(t => /^(?:もっと見る|さらに表示|もっと読み込む|Load more|Show more)$/i.test(t))
+     .map(() => 'load-more'),
    pagination: Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 2000)
      .map(e => {
        const rel = (e.getAttribute('rel') || '').split(/\\s+/);
@@ -39,6 +43,7 @@ SNAPSHOT = """() => {
        const kind = rel.includes('next') ? 'next' : rel.includes('prev') ? 'prev' :
          /^(?:次へ|次のページ|Next|›|»)$/.test(label) ? 'next' :
          /^(?:前へ|前のページ|Previous|Prev|‹|«)$/.test(label) ? 'prev' :
+         /^(?:もっと見る|さらに表示|もっと読み込む|Load more|Show more)$/i.test(label) ? 'load-more' :
          /^\\d+$/.test(label) ? 'page-number' : null;
        return kind ? {url: e.href, kind} : null;
      }).filter(Boolean),
@@ -128,6 +133,13 @@ def evidence(platform, url, snapshot):
     )
     if platform == 'forkwell':
         result.update(forkwell_evidence(url, snapshot, links))
+    elif platform == 'lapras':
+        result.update(forkwell_evidence(url, snapshot, links, platform='lapras'))
+        candidates = result['job_link_patterns']
+        result['candidate_job_link_patterns'] = candidates
+        result['stable_id_candidates'] = (
+            ['numeric_path_segment'] if '/jobs/:id' in candidates
+            or result['stable_id_path_segment'] else [])
     if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
     elif not candidates and result.get('page_kind') != 'detail':
@@ -144,11 +156,23 @@ def forkwell_id_segment(url):
     return None
 
 
-def forkwell_evidence(url, snapshot, links):
+def lapras_job_segment(url):
+    """Observed single-segment job route; a slug is not a proven stable ID."""
+    parts = [part for part in urlsplit(url).path.split('/') if part]
+    if (len(parts) == 2 and parts[0] == 'jobs'
+            and parts[1] not in SEGMENTS
+            and re.fullmatch(r'[A-Za-z0-9_-]+', parts[1])):
+        return 2
+    return None
+
+
+def forkwell_evidence(url, snapshot, links, *, platform='forkwell'):
+    """Shared redacted route evidence; never a production adapter selector."""
     if not isinstance(snapshot.get('pagination', []), list):
         raise ValueError('Invalid pagination structure')
-    job_links = [link for link in links if forkwell_id_segment(link) is not None]
-    position = forkwell_id_segment(url)
+    segment = lapras_job_segment if platform == 'lapras' else forkwell_id_segment
+    job_links = [link for link in links if segment(link) is not None]
+    position = segment(url)
     result = {'page_kind': 'detail' if position else 'list' if job_links else 'other',
               'job_link_count': len(job_links),
               'job_link_patterns': sorted({path_pattern(link) for link in job_links}),
@@ -156,8 +180,11 @@ def forkwell_evidence(url, snapshot, links):
               'canonical_url_pattern': None,
               'pagination_link_patterns': [], 'pagination_query_keys': [],
               'pagination_candidates': []}
+    if platform == 'lapras':
+        result['stable_id_path_segment'] = (
+            position if position and path_pattern(url) == '/jobs/:id' else None)
     canonical = snapshot.get('canonical')
-    if canonical and allowed(canonical, 'forkwell'):
+    if canonical and allowed(canonical, platform):
         # A canonical can support the detail route only if it names the same job.
         if position and urlsplit(canonical).path.rstrip('/') == urlsplit(url).path.rstrip('/'):
             result['canonical_url_pattern'] = path_pattern(canonical)
@@ -167,13 +194,22 @@ def forkwell_evidence(url, snapshot, links):
             continue
         target = item.get('url')
         kind = item.get('kind')
-        if kind in {'next', 'prev', 'page-number'} and allowed(target, 'forkwell'):
+        kinds = {'next', 'prev', 'page-number'}
+        if platform == 'lapras':
+            kinds.add('load-more')
+        if kind in kinds and allowed(target, platform):
             pagination.append((target, kind))
     # Query parameters alone are weak evidence; only fixed keys may leave the probe.
     result['pagination_query_keys'] = sorted({key for target in [url, *links, *(t for t, _ in pagination)]
         for key, _ in parse_qsl(urlsplit(target).query) if key in PAGINATION_KEYS})
     result['pagination_link_patterns'] = sorted({path_pattern(target) for target, _ in pagination})
     result['pagination_candidates'] = sorted({kind for _, kind in pagination})
+    if platform == 'lapras':
+        controls = snapshot.get('controls', [])
+        if not isinstance(controls, list):
+            raise ValueError('Invalid controls structure')
+        if 'load-more' in controls:
+            result['pagination_candidates'] = sorted(set(result['pagination_candidates']) | {'load-more'})
     return result
 
 
