@@ -55,20 +55,54 @@ def parse_fields(sections, title=''):
 DETAIL = r"""() => {
  const labels = LABELS_JSON;
  const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
- const title = Array.from(document.querySelectorAll('h1')).find(visible);
- const sections = {};
- for (const e of document.querySelectorAll('h1,h2,h3,h4,dt,th')) {
-   if (e === title || !visible(e)) continue;
-   const label = (e.textContent || '').trim();
-   if (!labels.includes(label)) continue;
-   let texts = [];
-   for (let n = e.nextElementSibling; n && !n.matches('h1,h2,h3,h4,dt,th'); n = n.nextElementSibling) {
-     if (visible(n)) texts.push(n.innerText || '');
+ const headings = 'h1,h2,h3,h4,dt,th';
+ const carriers = headings + ',label,[role=heading],p,span,div,strong';
+ const text = e => (e.innerText || e.textContent || '').trim();
+ const titleNode = Array.from(document.querySelectorAll('h1')).find(e => visible(e) && text(e));
+ const cleanTitle = value => {
+   let result = (value || '').trim();
+   for (const suffix of [' | LAPRAS（ラプラス）', ' | LAPRAS']) {
+     if (result === suffix.trim()) return '';
+     if (result.endsWith(suffix)) {
+       result = result.slice(0, -suffix.length).trim();
+       break;
+     }
    }
-   if (e.matches('th')) texts = [e.nextElementSibling?.innerText || ''];
-   sections[label] = texts.join('\n');
+   return ['LAPRAS', 'LAPRAS（ラプラス）'].includes(result) ? '' : result;
+ };
+ const meta = Array.from(document.querySelectorAll('meta[property="og:title"]'));
+ const title = titleNode ? text(titleNode) :
+   cleanTitle(meta[0]?.getAttribute('content')) || cleanTitle(document.title);
+ const sections = {};
+ const labelOf = e => visible(e) && e.matches(carriers) && labels.includes(text(e)) ? text(e) : '';
+ // Only subsequent siblings in the label's own container; nested labels stop
+ // traversal before another section's contents can enter responsibilities.
+ const collect = (node, label, texts) => {
+   if (!visible(node)) return false;
+   if (labelOf(node) || node.matches(headings) &&
+       !(label === '仕事内容' && text(node) === '概要')) return true;
+   if (node.children?.length) {
+     for (const child of node.children) {
+       if (collect(child, label, texts)) return true;
+     }
+   } else if (!(label === '仕事内容' && text(node) === '概要')) {
+     texts.push(text(node));
+   }
+   return false;
+ };
+ for (const e of document.querySelectorAll(carriers)) {
+   if (e === titleNode) continue;
+   const label = labelOf(e);
+   if (!label) continue;
+   if (Array.from(e.children || []).some(child => labelOf(child) === label)) continue;
+   const texts = [];
+   for (let n = e.nextElementSibling; n; n = n.nextElementSibling) {
+     if (collect(n, label, texts) || e.matches('th')) break;
+   }
+   const value = texts.filter(Boolean).join('\n');
+   if (value && !sections[label]) sections[label] = value;
  }
- return {title: title?.innerText || '', sections};
+ return {title, sections};
 }""".replace("LABELS_JSON", json.dumps(list(ALIASES), ensure_ascii=False))
 
 

@@ -277,3 +277,68 @@ def test_cli_lapras_source_without_running_search(monkeypatch):
     monkeypatch.setattr(search, 'search_command', lambda args, settings: calls.append(args) or 0)
     assert cli.main(['search', 'lapras', '--keyword', '求人検索']) == 0
     assert calls[0].platform == 'lapras' and calls[0].keyword == ['求人検索']
+
+
+def semantic_dom(nodes, og='', title=''):
+    """Execute the production JS with fictional elements, never a browser."""
+    import json
+    import shutil
+    import subprocess
+    from scout_agent.lapras_search import DETAIL
+    script = """
+const fixture = FIXTURE;
+function build([tag,text,children=[],hidden=false]) {
+ const node = {tag, textContent:text, innerText:text, hidden,
+ getClientRects(){return this.hidden ? [] : [1]},
+ matches(s){return s.split(',').includes(this.tag)}};
+ node.children = children.map(build);
+ node.children.forEach((n,i)=>n.nextElementSibling=node.children[i+1]||null);
+ return node;
+}
+const nodes=fixture.nodes.map(build);
+nodes.forEach((n,i)=>n.nextElementSibling=nodes[i+1]||null);
+const flatten=ns=>ns.flatMap(n=>[n,...flatten(n.children)]);
+global.getComputedStyle=()=>({visibility:'visible'});
+global.document={title:fixture.title,
+ querySelectorAll(s){return s.startsWith('meta') ?
+ (fixture.og ? [{getAttribute:()=>fixture.og}] : []) : flatten(nodes).filter(n=>n.matches(s))},
+ get body(){throw Error('Forbidden body access')}};
+""".replace('FIXTURE', json.dumps(dict(nodes=nodes, og=og, title=title)))
+    result = subprocess.run([shutil.which('node'), '-e', script +
+        '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    return parse_fields(data['sections'], data['title'])
+
+
+@pytest.mark.parametrize('nodes,og,title,expected', [
+    ([], 'Fictional SRE | LAPRAS（ラプラス）', '', 'Fictional SRE'),
+    ([], '', 'Fictional Platform | LAPRAS', 'Fictional Platform'),
+    ([], '', 'Fictional Platform | LAPRAS（ラプラス）', 'Fictional Platform'),
+    ([['h1', ''], ['h1', 'Fictional H1']], 'Other | LAPRAS', '', 'Fictional H1'),
+    ([['h1', 'hidden', [], True]], 'Visible | LAPRAS', '', 'Visible'),
+    ([], '', '', None),
+    ([], 'LAPRAS', 'LAPRAS（ラプラス）', None),
+    ([], '', ' | LAPRAS', None),
+    ([], '', 'Fictional | Different site', 'Fictional | Different site'),
+])
+def test_semantic_title_fallback(nodes, og, title, expected):
+    assert semantic_dom(nodes, og, title).get('title') == expected
+
+
+@pytest.mark.parametrize('nodes,expected', [
+    ([['span', '仕事内容'], ['p', '架空基盤の運用']], '架空基盤の運用'),
+    ([['div', '仕事内容'], ['h3', '概要'], ['p', '架空基盤の運用']], '架空基盤の運用'),
+    ([['label', '仕事内容'], ['div', '概要\n架空基盤の運用',
+      [['strong', '概要'], ['p', '架空基盤の運用']]]], '架空基盤の運用'),
+    ([['strong', '概要'], ['p', '架空基盤の運用']], None),
+    ([['span', '仕事内容'], ['span', '給与'], ['p', '600万円']], None),
+    ([['span', '仕事内容'], ['p', '架空基盤の運用'], ['div', '給与'],
+      ['p', '600万円']], '架空基盤の運用'),
+    ([['span', '仕事内容'], ['div', 'mixed', [['p', '架空基盤の運用'],
+      ['span', '給与'], ['p', '600万円']]]], '架空基盤の運用'),
+    ([['span', '仕事内容の紹介'], ['p', '架空基盤の運用']], None),
+    ([['div', '仕事内容'], ['h3', '概要']], None),
+])
+def test_semantic_local_responsibilities(nodes, expected):
+    assert semantic_dom(nodes, title='Fictional | LAPRAS').get('responsibilities') == expected
