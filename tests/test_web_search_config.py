@@ -80,7 +80,9 @@ def test_search_page_wires_persistence_before_submit(tmp_path):
     with TestClient(app) as client:
         html = client.get('/search').text
         assert '/static/search_config.js' in html
-        assert 'SearchConfig.restore(form, configLimits)' in html
+        assert 'SearchConfig.restore(form, configLimits, renderSources)' in html
+        assert '<option value="forkwell">Forkwell</option>' in html
+        assert 'platform: form.elements.platform.value' in html
         assert html.index('SearchConfig.save(form, configLimits)') < html.index("fetch('/search/run',")
         assert "location.reload()" in html
         assert client.get('/static/search_config.js').status_code == 200
@@ -172,3 +174,42 @@ def test_search_controls_labels_structure_and_styles(tmp_path):
     assert 'white-space: nowrap' in labels
     assert 'flex-wrap: wrap' in re.search(r'\.search-source-options\s*\{([^}]+)\}', css).group(1)
     assert 'border: 0' in re.search(r'\.search-sources\s*\{([^}]+)\}', css).group(1)
+
+
+def test_forkwell_config_survives_reload(tmp_path):
+    script = Path('scout_agent/web/static/search_config.js').read_text()
+    script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += r'''
+const assert = require('node:assert/strict');
+let stored;
+global.sessionStorage = {getItem: () => stored, setItem: (_, value) => stored = value};
+function form() {
+  const f = {elements: {platform: {value: 'green'}}, inputs: [],
+    numbers: Object.entries(limits).map(([name,[value]]) => ({name,value})),
+    querySelectorAll(s) {
+      if (s === '[type=number]') return this.numbers;
+      if (s === '[name=sources]') return this.inputs;
+      if (s === '[name=sources]:checked') return this.inputs.filter(i => i.checked);
+      throw Error(s);
+    }};
+  f.render = () => f.inputs = (f.elements.platform.value === 'forkwell' ? ['求人一覧'] : ['AWS'])
+    .map(value => ({value, checked:true}));
+  f.render(); return f;
+}
+const first = form(); first.elements.platform.value = 'forkwell'; first.render();
+assert.equal(SearchConfig.save(first, limits), true);
+assert.equal(JSON.parse(stored).platform, 'forkwell');
+const second = form(); SearchConfig.restore(second, limits, second.render);
+assert.equal(second.elements.platform.value, 'forkwell');
+assert.deepEqual(second.inputs.map(i => i.value), ['求人一覧']);
+assert.equal(SearchConfig.save(second, limits), true);
+const good = stored;
+stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+assert.equal(fallback.elements.platform.value, 'green');
+assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['求人一覧'], limits), null);
+console.log('Forkwell platform and source survive reload; cross-platform sources rejected');
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'cross-platform sources rejected' in result.stdout

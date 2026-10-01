@@ -112,15 +112,15 @@ def main(
     parser = argparse.ArgumentParser(description="READ-ONLY local Job Scout screening agent")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("browser", help="Inspect existing Chrome tabs (CDP) or open legacy persistent Chromium")
-    search = sub.add_parser("search", help="Green 主动搜索候选池（只读，TARGET + POSSIBLE）")
-    search.add_argument("platform", choices=["green"], nargs="?", default="green", help="仅支持 Green")
+    search = sub.add_parser("search", help="多平台主动搜索候选池（只读，TARGET + POSSIBLE）")
+    search.add_argument("platform", choices=["green", "forkwell"], nargs="?", default="green", help="单次选择 Green 或 Forkwell")
     search.add_argument("--max-jobs", type=_positive_int, default=None, help="独立职位详情上限（正式默认 30；probe 默认/最大 5）")
     search.add_argument("--max-model-jobs", type=_positive_int, default=20, help="Codex 职位预算（默认 20）")
     search.add_argument("--pages-per-keyword", type=_positive_int, default=None, help="兼容模式：每 source 固定前 N 页；未指定时增量轮转（probe 固定第一页）")
     from scout_agent.green_discovery import KEYWORDS
     search.add_argument("--coverage-pages", type=_positive_int, default=2, help="每 source 每次深页数量（默认 2）")
     search.add_argument("--max-depth", type=_positive_int, default=15, help="轮转最大页码（默认 15，至少 2）")
-    search.add_argument("--keyword", action="append", choices=KEYWORDS, help="已验证 source label，可重复；不是任意关键词搜索")
+    search.add_argument("--keyword", action="append", choices=(*KEYWORDS, "求人一覧"), help="已验证 source label，可重复；不是任意关键词搜索")
     search.add_argument("--probe", action="store_true", help="CDP 只读结构检查：0 模型调用、无数据库/报告；每来源仅第一页，最多 5 个详情")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())
@@ -148,6 +148,8 @@ def main(
     if args.command == "search":
         from scout_agent.green_discovery import probe_command, GreenSearchDOMPending
         try:
+            if args.probe and args.platform != "green":
+                raise ValueError("Forkwell 不支持 Green probe")
             if args.probe:
                 return probe_command(args, load_settings())
             from scout_agent.search import search_command

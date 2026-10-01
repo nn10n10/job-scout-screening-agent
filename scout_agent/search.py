@@ -453,12 +453,17 @@ def search_command(args, settings, *, adapter=None):
         reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
                   'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else
                   'PLAYWRIGHT_ERROR' if isinstance(exc, Error) else 'PARSE_ERROR')
+        if reason == 'NEEDS_LOGIN':
+            print(json.dumps({'platform': getattr(args, 'platform', 'green'), 'status': 'NEEDS_LOGIN'}), file=sys.stderr)
+            return 1
         if reason not in SAFE_REASONS:
             reason = 'UNKNOWN'
         # Context comes only from validated discovery labels, never exception text.
-        if source not in KEYWORDS:
+        from scout_agent.forkwell_discovery import SOURCES as FORKWELL_SOURCES
+        if source not in (*KEYWORDS, *FORKWELL_SOURCES):
             source, number = 'NONE', 0
-        print(f'Green safety stop: source={source} page={number} category={reason}',
+        platform_label = 'Forkwell' if getattr(args, 'platform', 'green') == 'forkwell' else 'Green'
+        print(f'{platform_label} safety stop: source={source} page={number} category={reason}',
               file=sys.stderr, flush=True)
         return 1
 
@@ -466,13 +471,16 @@ def search_command(args, settings, *, adapter=None):
 def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.browser.manager import BrowserManager
     from scout_agent.storage.db import Database
-    adapter = adapter or GreenSearchAdapter()
+    from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+    adapter = adapter or (ForkwellSearchAdapter() if getattr(args, 'platform', 'green') == 'forkwell' else GreenSearchAdapter())
     adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
-    for label in args.keyword or KEYWORDS:
-        source_url(label)
+    sources = args.keyword or getattr(adapter, 'source_labels', KEYWORDS)
+    validate_source = getattr(adapter, 'source_url', source_url)
+    for label in sources:
+        validate_source(label)
     if settings.browser_mode != 'cdp':
-        raise ValueError('Green Search 仅支持已有 Chrome CDP，禁止 legacy fallback。')
+        raise ValueError('Search 仅支持已有 Chrome CDP，禁止 legacy fallback。')
     with BrowserManager(settings.profile_path, mode='cdp', cdp_endpoint=settings.cdp_endpoint).open() as session:
         if not session.contexts:
             raise ValueError('Chrome 无可用 context。')
@@ -483,7 +491,7 @@ def _search_command(args, settings, *, adapter=None, progress=None):
                 try:
                     results, stats = run_search(adapter, SearchStore(db),
                         SearchCodex(settings.codex_model, RULES, 'low'),
-                        keywords=args.keyword or KEYWORDS, max_jobs=args.max_jobs or 30,
+                        keywords=sources, max_jobs=args.max_jobs or 30,
                         max_model_jobs=args.max_model_jobs, batch_size=settings.codex_batch_size,
                         pages_per_keyword=args.pages_per_keyword,
                         coverage_pages=getattr(args, 'coverage_pages', 2),
