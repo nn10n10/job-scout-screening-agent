@@ -7,7 +7,7 @@ ROLES = frozenset({'main', 'article', 'section', 'region', 'tab', 'tabpanel', 'h
 RELATIONS = frozenset({'same-parent-next-sibling', 'same-parent-following-sibling', 'ancestor-next-sibling',
                        'nested-next-block', 'tab-panel'})
 
-# Called only by platform_discovery, not by the production Search parser.
+# Used by discovery and optional fail-closed Search diagnostics, never parsing.
 STRUCTURE = r"""() => {
  const labels = ['仕事内容','業務内容','職務内容','応募資格','必須要件','必須スキル','歓迎要件','歓迎スキル','概要'];
  const tags = new Set('html body main article section div span h1 h2 h3 h4 h5 h6 p dt dd dl ul ol li table tbody tr th td label button a header footer nav aside'.split(' '));

@@ -421,3 +421,100 @@ def test_summary_intro_cannot_cross_immediate_sibling():
     nodes = ancestor_summary_dom(3, following=[['p', 'OUTSIDE EXCLUDED']])
     nodes[1][2][0][2][1] = ['div', '', [['h1', 'Fictional intro']]]
     assert 'responsibilities' not in semantic_dom(nodes)
+
+
+def unsafe_structure():
+    secret = 'FIXTURE_SECRET'
+    return {'visible_h1_count': 1, 'has_og_title': True,
+            'labels': [{'label': '仕事内容', 'tag': 'span', 'role': secret,
+                        'ancestors': [{'tag': 'div', 'class': secret}],
+                        'content_relationship_candidates': ['ancestor-next-sibling', secret],
+                        'next_fixed_label': '概要', 'text': secret}],
+            **{key: secret for key in ('raw_text', 'job_id', 'url', 'title', 'company',
+                                      'class', 'id', 'data-private')}}
+
+
+@pytest.mark.parametrize('title,reason', [('Fictional title', 'RESPONSIBILITIES_MISSING'),
+                                         ('', 'TITLE_MISSING')])
+def test_missing_detail_captures_only_safe_structure(title, reason):
+    import json
+    from scout_agent.lapras_structure import STRUCTURE, sanitize
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    snapshot = {'ready': 'complete', 'canonical': job.url}
+    raw = unsafe_structure()
+    a.page.evaluate.side_effect = [snapshot, {'title': title, 'sections': {}}, snapshot, raw]
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == reason
+    assert a.page.evaluate.call_args.args == (STRUCTURE,)
+    assert a.last_safe_detail_diagnostic == sanitize(raw)
+    encoded = json.dumps(a.last_safe_detail_diagnostic)
+    for forbidden in ('FIXTURE_SECRET', 'raw_text', 'job_id', 'url', 'title', 'company',
+                      'class', '"id"', 'data-private', '123', 'Fictional title'):
+        # The allowlisted has_og_title / has_document_title are boolean structure fields.
+        assert ('"title"' if forbidden == 'title' else forbidden) not in encoded
+    assert a.last_safe_detail_diagnostic['labels'][0]['tag'] == 'span'
+    a.page.evaluate.side_effect = [snapshot, {'title': 'Next fictional',
+                                            'sections': {'仕事内容': '架空運用'}}, snapshot]
+    assert a.job_detail(job)['responsibilities'] == '架空運用'
+    assert a.last_safe_detail_diagnostic is None
+
+
+@pytest.mark.parametrize('diagnostic', [RuntimeError('FIXTURE_SECRET'), {'labels': None}])
+def test_diagnostic_failure_preserves_primary_reason(diagnostic):
+    job = job_from_url('/jobs/123', {})
+    a = adapter({}, job.url)
+    snapshot = {'ready': 'complete', 'canonical': job.url}
+    a.page.evaluate.side_effect = [snapshot, {'title': 'Fictional', 'sections': {}},
+                                   snapshot, diagnostic]
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == 'RESPONSIBILITIES_MISSING'
+    assert a.last_safe_detail_diagnostic is None
+
+
+def test_detail_clears_diagnostic_before_validation():
+    a = LaprasSearchAdapter()
+    a.last_safe_detail_diagnostic = unsafe_structure()
+    with pytest.raises(ValueError):
+        a.job_detail(SimpleNamespace(url='https://fictional.invalid/jobs/123'))
+    assert a.last_safe_detail_diagnostic is None
+
+
+@pytest.mark.parametrize('platform,raw,exception,expected', [
+    ('lapras', unsafe_structure(), GreenSearchDOMPending('DETAIL_RESPONSIBILITIES', 'RESPONSIBILITIES_MISSING'), True),
+    ('lapras', None, GreenSearchDOMPending('DETAIL_RESPONSIBILITIES', 'RESPONSIBILITIES_MISSING'), False),
+    ('green', unsafe_structure(), GreenSearchDOMPending('DETAIL_RESPONSIBILITIES', 'RESPONSIBILITIES_MISSING'), False),
+    ('forkwell', unsafe_structure(), GreenSearchDOMPending('DETAIL_RESPONSIBILITIES', 'RESPONSIBILITIES_MISSING'), False),
+    ('lapras', unsafe_structure(), ValueError('FIXTURE_SECRET'), False),
+])
+@pytest.mark.parametrize('injected', [True, False])
+def test_cli_safe_diagnostic_gating(monkeypatch, capsys, platform, raw, exception, expected, injected):
+    import json
+    import scout_agent.search as search
+    from scout_agent.lapras_structure import sanitize
+    a = LaprasSearchAdapter()
+    def fail(args, settings, *, adapter, progress):
+        adapter.last_safe_detail_diagnostic = raw
+        raise exception
+    monkeypatch.setattr(search, '_search_command', fail)
+    assert search_command(SimpleNamespace(platform=platform), None,
+                          adapter=a if injected else None) == 1
+    output = capsys.readouterr()
+    prefix = 'LAPRAS safe detail diagnostic: '
+    lines = [line for line in output.err.splitlines() if line.startswith(prefix)]
+    assert len(lines) == int(expected)
+    assert prefix not in output.out
+    assert 'FIXTURE_SECRET' not in output.err
+    if expected:
+        assert json.loads(lines[0][len(prefix):]) == sanitize(raw)
+
+
+def test_web_ignores_safe_detail_diagnostic():
+    import json
+    from scout_agent.lapras_structure import sanitize
+    manager = SearchRunManager()
+    before = manager.snapshot()
+    manager._emit('LAPRAS safe detail diagnostic: ' + json.dumps(sanitize(unsafe_structure())))
+    assert manager.snapshot() == before

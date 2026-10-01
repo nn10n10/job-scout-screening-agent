@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlsplit
 from scout_agent.green_discovery import GreenSearchDOMPending, Stage
 from scout_agent.platform_discovery import SNAPSHOT, login_url
 from scout_agent.search_platforms import Job, job_identity
+from scout_agent.lapras_structure import STRUCTURE, sanitize
 
 ORIGIN = 'https://lapras.com'
 SOURCES = ('求人検索',)
@@ -155,6 +156,7 @@ class LaprasSearchAdapter:
     source_labels = SOURCES
     supports_pagination = False
     max_verified_page = 1
+    last_safe_detail_diagnostic = None
 
     def ensure_verified(self):
         # Enabled by supervisor route/probe evidence; live parsing remains to be verified.
@@ -248,7 +250,16 @@ class LaprasSearchAdapter:
             self._stop('NO_STABLE_JOB_LINKS', Stage.JOB_LINKS)
         return list(jobs.values())
 
+    def _capture_safe_detail_diagnostic(self):
+        try:
+            self.last_safe_detail_diagnostic = sanitize(
+                self._read(STRUCTURE, Stage.DETAIL_NAVIGATION))
+        except Exception:
+            # Optional evidence must never replace the primary fail-closed reason.
+            pass
+
     def job_detail(self, job):
+        self.last_safe_detail_diagnostic = None
         target = self.validate_job(job)
         self._navigate(target, Stage.DETAIL_NAVIGATION)
         snapshot = self._snapshot(Stage.DETAIL_NAVIGATION)
@@ -276,7 +287,9 @@ class LaprasSearchAdapter:
             self._stop('PARSE_ERROR', Stage.DETAIL_RESPONSIBILITIES)
         fields = parse_fields(data['sections'], data['title'])
         if not fields.get('title'):
+            self._capture_safe_detail_diagnostic()
             self._stop('TITLE_MISSING', Stage.DETAIL_TITLE)
         if not fields.get('responsibilities'):
+            self._capture_safe_detail_diagnostic()
             self._stop('RESPONSIBILITIES_MISSING', Stage.DETAIL_RESPONSIBILITIES)
         return fields
