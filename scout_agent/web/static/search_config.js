@@ -5,7 +5,7 @@ const SearchConfig = (() => {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
     const fields = ['sources', ...Object.keys(limits)];
     if ('platform' in data) {
-      if (!['green', 'forkwell', 'lapras', 'findy'].includes(data.platform)) return null;
+      if (!['green', 'forkwell', 'lapras', 'findy', 'type'].includes(data.platform)) return null;
       fields.push('platform');
     }
     if (Object.keys(data).length !== fields.length ||
@@ -16,7 +16,7 @@ const SearchConfig = (() => {
     const config = {sources: [...data.sources]};
     if ('platform' in data) config.platform = data.platform;
     for (const [name, [defaultValue, low, high]] of Object.entries(limits)) {
-      const value = data.platform === 'lapras' && ['coverage_pages', 'max_depth'].includes(name)
+      const value = ['lapras', 'type'].includes(data.platform) && ['coverage_pages', 'max_depth'].includes(name)
         ? defaultValue : data[name];
       if (!Number.isInteger(value) || value < low || value > high) return null;
       config[name] = value;
@@ -29,8 +29,8 @@ const SearchConfig = (() => {
   function restore(form, limits, renderSources) {
     try {
       const data = JSON.parse(sessionStorage.getItem(key));
-      if (data && ['green', 'forkwell', 'lapras', 'findy'].includes(data.platform) && form.elements?.platform) {
-        const labels = data.platform === 'findy' ? ['おすすめ求人'] : data.platform === 'lapras' ? ['求人検索'] : data.platform === 'forkwell' ? ['求人一覧'] : sources(form);
+      if (data && ['green', 'forkwell', 'lapras', 'findy', 'type'].includes(data.platform) && form.elements?.platform) {
+        const labels = data.platform === 'type' ? ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'] : data.platform === 'findy' ? ['おすすめ求人'] : data.platform === 'lapras' ? ['求人検索'] : data.platform === 'forkwell' ? ['求人一覧'] : sources(form);
         if (!validate(data, labels, limits)) return;
         form.elements.platform.value = data.platform;
         renderSources?.();

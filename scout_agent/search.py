@@ -447,25 +447,33 @@ def search_command(args, settings, *, adapter=None):
 
     def progress(label, page):
         nonlocal source, number
+        if getattr(args, 'platform', 'green') == 'type':
+            from scout_agent.type_search import SOURCES as TYPE_SOURCES
+            if label not in TYPE_SOURCES:
+                source, number = 'NONE', 0
+                return
         source, number = label, page
         print(f'Search progress: {label} page {page}', flush=True)
 
     try:
         if adapter is None:
             from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+            from scout_agent.type_search import TypeSearchAdapter
             from scout_agent.findy_search import FindySearchAdapter
             from scout_agent.lapras_search import LaprasSearchAdapter
             adapter = {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter}[getattr(args, 'platform', 'green')]()
+                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter}[getattr(args, 'platform', 'green')]()
         return _search_command(args, settings, adapter=adapter, progress=progress)
     except (GreenSearchDOMPending, ValueError, Error) as exc:
         if (isinstance(exc, GreenSearchDOMPending)
-                and getattr(args, 'platform', 'green') in {'lapras', 'findy'}
-                and (getattr(args, 'platform', 'green') != 'findy'
+                and getattr(args, 'platform', 'green') in {'lapras', 'findy', 'type'}
+                and (getattr(args, 'platform', 'green') not in {'findy', 'type'}
                      or exc.reason in {'TITLE_MISSING', 'RESPONSIBILITIES_MISSING'})
                 and getattr(adapter, 'last_safe_detail_diagnostic', None) is not None):
             if getattr(args, 'platform', 'green') == 'findy':
                 from scout_agent.findy_structure import sanitize
+            elif getattr(args, 'platform', 'green') == 'type':
+                from scout_agent.type_detail_structure import sanitize
             else:
                 from scout_agent.lapras_structure import sanitize
             try:
@@ -473,11 +481,23 @@ def search_command(args, settings, *, adapter=None):
             except Exception:
                 pass
             else:
-                print(('Findy' if args.platform == 'findy' else 'LAPRAS') + ' safe detail diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
+                print({'findy': 'Findy', 'type': 'Type', 'lapras': 'LAPRAS'}[args.platform] + ' safe detail diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
                       file=sys.stderr, flush=True)
         reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
                   'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else
                   'PLAYWRIGHT_ERROR' if isinstance(exc, Error) else 'PARSE_ERROR')
+        if (getattr(args, 'platform', 'green') == 'type'
+                and isinstance(exc, GreenSearchDOMPending)
+                and reason == 'NO_VALID_JOB_LINKS'
+                and getattr(adapter, 'last_safe_source_diagnostic', None) is not None):
+            try:
+                from scout_agent.type_structure import sanitize
+                diagnostic = sanitize(adapter.last_safe_source_diagnostic)
+            except Exception:
+                pass
+            else:
+                print('Type safe source diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
+                      file=sys.stderr, flush=True)
         if reason == 'NEEDS_LOGIN':
             print(json.dumps({'platform': getattr(args, 'platform', 'green'), 'status': 'NEEDS_LOGIN'}), file=sys.stderr)
             return 1
@@ -485,11 +505,14 @@ def search_command(args, settings, *, adapter=None):
             reason = 'UNKNOWN'
         # Context comes only from validated discovery labels, never exception text.
         from scout_agent.forkwell_discovery import SOURCES as FORKWELL_SOURCES
+        from scout_agent.type_search import SOURCES as TYPE_SOURCES
         from scout_agent.findy_search import SOURCES as FINDY_SOURCES
         from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
-        if source not in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES):
+        allowed_sources = TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
+            *KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES)
+        if source not in allowed_sources:
             source, number = 'NONE', 0
-        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy'}.get(getattr(args, 'platform', 'green'), 'Green')
+        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type'}.get(getattr(args, 'platform', 'green'), 'Green')
         print(f'{platform_label} safety stop: source={source} page={number} category={reason}',
               file=sys.stderr, flush=True)
         return 1
@@ -499,10 +522,11 @@ def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.browser.manager import BrowserManager
     from scout_agent.storage.db import Database
     from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+    from scout_agent.type_search import TypeSearchAdapter
     from scout_agent.findy_search import FindySearchAdapter
     from scout_agent.lapras_search import LaprasSearchAdapter
     adapter = adapter or {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter}[getattr(args, 'platform', 'green')]()
+                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter}[getattr(args, 'platform', 'green')]()
     adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
     sources = args.keyword or getattr(adapter, 'source_labels', KEYWORDS)
