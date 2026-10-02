@@ -479,6 +479,18 @@ def search_command(args, settings, *, adapter=None):
         reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
                   'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else
                   'PLAYWRIGHT_ERROR' if isinstance(exc, Error) else 'PARSE_ERROR')
+        if (getattr(args, 'platform', 'green') == 'type'
+                and isinstance(exc, GreenSearchDOMPending)
+                and reason == 'NO_VALID_JOB_LINKS'
+                and getattr(adapter, 'last_safe_source_diagnostic', None) is not None):
+            try:
+                from scout_agent.type_structure import sanitize
+                diagnostic = sanitize(adapter.last_safe_source_diagnostic)
+            except Exception:
+                pass
+            else:
+                print('Type safe source diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
+                      file=sys.stderr, flush=True)
         if reason == 'NEEDS_LOGIN':
             print(json.dumps({'platform': getattr(args, 'platform', 'green'), 'status': 'NEEDS_LOGIN'}), file=sys.stderr)
             return 1

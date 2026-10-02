@@ -98,6 +98,7 @@ DETAIL = r"""() => {
 
 
 class TypeSearchAdapter:
+    last_safe_source_diagnostic = None
     last_safe_detail_diagnostic = None
     platform_key = 'type'
     source_labels = SOURCES
@@ -169,6 +170,7 @@ class TypeSearchAdapter:
         self._check_navigation(stage)
 
     def search_cards(self, keyword, page):
+        self.last_safe_source_diagnostic = None
         target = self.source_url(keyword, page)
         self._navigate(target, Stage.SOURCE_NAVIGATION)
         # Only local waits on the same page: at most 2 seconds for late cards.
@@ -189,6 +191,11 @@ class TypeSearchAdapter:
             if jobs:
                 return list(jobs.values())
         # Absence is not evidence of an empty result/end of pagination.
+        try:
+            from scout_agent.type_structure import SOURCE_STRUCTURE, sanitize
+            self.last_safe_source_diagnostic = sanitize(self._read(SOURCE_STRUCTURE, Stage.SOURCE_URL))
+        except Exception:
+            pass
         self._stop('NO_VALID_JOB_LINKS', Stage.JOB_LINKS)
 
     def job_detail(self, job):

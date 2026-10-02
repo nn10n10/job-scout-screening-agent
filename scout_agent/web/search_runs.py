@@ -102,7 +102,7 @@ class SearchRunManager:
         return True
 
     def _emit(self, line):
-        if line.startswith('Findy safe detail diagnostic: '):
+        if line.startswith(('Findy safe detail diagnostic: ', 'Type safe source diagnostic: ')):
             return
         safe = None
         with self.lock:

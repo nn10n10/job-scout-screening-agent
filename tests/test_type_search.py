@@ -43,7 +43,7 @@ def test_list_readiness_wait_has_hard_limit(links):
     with pytest.raises(GreenSearchDOMPending) as exc:
         a.search_cards('IT・Webエンジニア', 1)
     assert exc.value.reason == 'NO_VALID_JOB_LINKS'
-    assert a.page.evaluate.call_count == 5
+    assert a.page.evaluate.call_count == 6
     assert [call.args for call in a.page.wait_for_timeout.call_args_list] == [(500,)] * 4
     a.page.goto.assert_called_once()
 
