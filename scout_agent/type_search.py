@@ -51,14 +51,14 @@ def parse_fields(sections, title=''):
 DETAIL = r"""() => {
  const labels = LABELS_JSON;
  const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
- const headings = 'h1,h2,h3,h4,h5,h6,dt,th,[role=heading],section';
- const carriers = headings + ',label,p,span,div,strong';
+ const headings = 'h1,h2,h3,h4,h5,h6,dt,th,[role=heading]';
+ const carriers = headings + ',section,label,p,span,div,strong';
  const text = e => (e.innerText || e.textContent || '').trim();
  const titleNode = Array.from(document.querySelectorAll('h1')).find(e => visible(e) && text(e));
  const title = titleNode ? text(titleNode) : '';
  const sections = {};
  const labelOf = e => visible(e) && e.matches(carriers) && labels.includes(text(e)) ? text(e) : '';
- // Local text only; nested labels and heading/section boundaries stop traversal.
+ // Local text only; fixed labels and real headings stop traversal.
  const collect = (node, label, texts) => {
    if (!visible(node)) return false;
    if (labelOf(node) || node.matches(headings)) return true;

@@ -371,11 +371,33 @@ def test_ancestor_fallback_allowlist_and_depth(label, key, depth):
 
 
 @pytest.mark.parametrize('boundary', [['span', '給与'], ['h3', 'Other heading'],
-                                      ['section', '', [['p', 'EXCLUDED']]]])
+                                      ['section', '応募資格']])
 def test_ancestor_fallback_stops_inside_body_subtree(boundary):
     fields = semantic_dom([['h1', 'Fictional'], ['section', '', [
         ['div', '', [['h2', '仕事内容']]], ['div', '', [
             ['p', '架空本文'], boundary, ['p', 'EXCLUDED']]]]]])
+    assert fields['responsibilities'] == '架空本文'
+
+
+def test_live_like_section_descendants_and_next_field():
+    fields = semantic_dom([['h1', 'Fictional'], ['div', '', [
+        ['div', '', [['h4', '仕事内容'], ['div', '', [
+            ['section', '', [['p', '架空基盤運用']]]]]]],
+        ['div', '', [['h4', '応募資格'], ['p', '架空資格']]]]]])
+    assert fields['responsibilities'] == '架空基盤運用'
+    assert fields['required'] == '架空資格'
+
+
+@pytest.mark.parametrize('boundary', [
+    ['h4', '応募資格'], ['span', '応募資格'], ['section', '勤務時間'],
+    *[[tag, 'Other heading'] for tag in
+      ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'dt', 'th', '[role=heading]')],
+])
+def test_section_recursion_stops_at_fixed_labels_and_real_headings(boundary):
+    fields = semantic_dom([['h1', 'Fictional'], ['h4', '仕事内容'],
+        ['div', 'EXCLUDED aggregate', [['section', 'EXCLUDED aggregate', [
+            ['section', '', [['p', '架空本文']]], boundary, ['p', 'EXCLUDED']]]]],
+        ['p', 'EXCLUDED after container']])
     assert fields['responsibilities'] == '架空本文'
 
 
