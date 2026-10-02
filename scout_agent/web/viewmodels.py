@@ -191,7 +191,10 @@ def search_cards(results, user_states=None):
     cards = []
     for job, result in results:
         try:
-            if job.platform == 'doda':
+            if job.platform == 'mynavi':
+                from scout_agent.mynavi_search import MynaviSearchAdapter
+                url = MynaviSearchAdapter().validate_job(job)
+            elif job.platform == 'doda':
                 from scout_agent.doda_search import DodaSearchAdapter
                 url = DodaSearchAdapter().validate_job(job)
             elif job.platform == 'type':
@@ -214,7 +217,7 @@ def search_cards(results, user_states=None):
             text = ' '.join(str(value or '').split())
             return text if len(text) <= limit else text[:limit - 1] + '…'
         cards.append(dict(
-            job_id=job.job_id, verdict=result.verdict, platform_label={'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type', 'doda': 'doda'}.get(job.platform, 'Green') if url else '未知平台',
+            job_id=job.job_id, verdict=result.verdict, platform_label={'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type', 'doda': 'doda', 'mynavi': 'マイナビ転職'}.get(job.platform, 'Green') if url else '未知平台',
             user_status=(user_states or {}).get(job.job_id, 'ACTIVE'),
             company=job.fields.get('company'), title=job.fields.get('title'),
             salary_preview=preview(job.fields.get('salary'), 40),

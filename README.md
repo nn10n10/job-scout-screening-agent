@@ -421,3 +421,5 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
 ```
 
 输出仅包含固定结构：exact `/jobinfo-:id4/` 与 `/job/:segment/` anchor 计数、allowlist tracking key presence、脱敏 source shape、final `/pg<digits>/` 分页候选以及普通详情 DOM bool。只有 current 与 same-origin canonical 的四段 ID 完全一致，才报告 `jobinfo-id4` 身份候选；该候选尚未用于 production。登录、加载或快照异常 fail-closed；不输出真实 ID、criteria、query value、公司、职位或 JD。Bridge/tests 仅用虚构数据，live 结果须等待 supervisor review 后再确定下一阶段。
+
+マイナビ転職 主动 Search：`python -m scout_agent search mynavi --keyword インフラエンジニア`。仅启用已验证的 `/engineer/list/o166/` 来源及 `/pgN/` 分页。职位身份 `mynavi:<四段ID>`，游标 `mynavi:インフラエンジニア`；tracking query/fragment 不保存。详情仅读取固定局部 selector，current/canonical 身份漂移、登录失效或缺少标题/职责时安全停止。保持 recall-first、缓存、人工状态和 POLICY_VERSION，不复用 Scout 严筛。WebUI 支持来源恢复、分页设置及经身份验证的 マイナビ転職 外链。本次仅虚构数据验证，真实验收待 supervisor。

@@ -113,7 +113,7 @@ def main(
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("browser", help="Inspect existing Chrome tabs (CDP) or open legacy persistent Chromium")
     search = sub.add_parser("search", help="多平台主动搜索候选池（只读，TARGET + POSSIBLE）")
-    search.add_argument("platform", choices=["green", "forkwell", "lapras", "findy", "type", "doda"], nargs="?", default="green", help="单次选择 Green、Forkwell、LAPRAS、Findy、Type 或 doda")
+    search.add_argument("platform", choices=["green", "forkwell", "lapras", "findy", "type", "doda", "mynavi"], nargs="?", default="green", help="单次选择 Green、Forkwell、LAPRAS、Findy、Type、doda 或 マイナビ転職")
     search.add_argument("--max-jobs", type=_positive_int, default=None, help="独立职位详情上限（正式默认 30；probe 默认/最大 5）")
     search.add_argument("--max-model-jobs", type=_positive_int, default=20, help="Codex 职位预算（默认 20）")
     search.add_argument("--pages-per-keyword", type=_positive_int, default=None, help="兼容模式：每 source 固定前 N 页；未指定时增量轮转（probe 固定第一页）")
