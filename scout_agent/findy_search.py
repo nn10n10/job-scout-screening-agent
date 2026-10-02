@@ -5,6 +5,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
+from scout_agent.findy_structure import STRUCTURE, sanitize
 from scout_agent.green_discovery import GreenSearchDOMPending, Stage
 from scout_agent.platform_discovery import SNAPSHOT, login_url
 from scout_agent.search_platforms import Job, job_identity
@@ -86,6 +87,7 @@ DETAIL = r"""() => {
 
 
 class FindySearchAdapter:
+    last_safe_detail_diagnostic = None
     platform_key = 'findy'
     source_labels = SOURCES
     supports_pagination = True
@@ -179,7 +181,16 @@ class FindySearchAdapter:
         # Absence is not evidence of an empty result/end of pagination.
         self._stop('NO_VALID_JOB_LINKS', Stage.JOB_LINKS)
 
+    def _capture_safe_detail_diagnostic(self):
+        try:
+            self.last_safe_detail_diagnostic = sanitize(
+                self._read(STRUCTURE, Stage.DETAIL_NAVIGATION))
+        except Exception:
+            # Optional evidence must preserve the primary failure.
+            pass
+
     def job_detail(self, job):
+        self.last_safe_detail_diagnostic = None
         target = self.validate_job(job)
         self._navigate(target, Stage.DETAIL_NAVIGATION)
         snapshot = self._snapshot(Stage.DETAIL_NAVIGATION)
@@ -223,7 +234,9 @@ class FindySearchAdapter:
             if fields.get('title') and fields.get('responsibilities'):
                 return fields
         if not fields.get('title'):
+            self._capture_safe_detail_diagnostic()
             self._stop('TITLE_MISSING', Stage.DETAIL_TITLE)
         if not fields.get('responsibilities'):
+            self._capture_safe_detail_diagnostic()
             self._stop('RESPONSIBILITIES_MISSING', Stage.DETAIL_RESPONSIBILITIES)
         return fields

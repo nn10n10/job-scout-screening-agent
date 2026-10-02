@@ -460,15 +460,20 @@ def search_command(args, settings, *, adapter=None):
         return _search_command(args, settings, adapter=adapter, progress=progress)
     except (GreenSearchDOMPending, ValueError, Error) as exc:
         if (isinstance(exc, GreenSearchDOMPending)
-                and getattr(args, 'platform', 'green') == 'lapras'
+                and getattr(args, 'platform', 'green') in {'lapras', 'findy'}
+                and (getattr(args, 'platform', 'green') != 'findy'
+                     or exc.reason in {'TITLE_MISSING', 'RESPONSIBILITIES_MISSING'})
                 and getattr(adapter, 'last_safe_detail_diagnostic', None) is not None):
-            from scout_agent.lapras_structure import sanitize
+            if getattr(args, 'platform', 'green') == 'findy':
+                from scout_agent.findy_structure import sanitize
+            else:
+                from scout_agent.lapras_structure import sanitize
             try:
                 diagnostic = sanitize(adapter.last_safe_detail_diagnostic)
             except Exception:
                 pass
             else:
-                print('LAPRAS safe detail diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
+                print(('Findy' if args.platform == 'findy' else 'LAPRAS') + ' safe detail diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False),
                       file=sys.stderr, flush=True)
         reason = (exc.reason if isinstance(exc, GreenSearchDOMPending) else
                   'PLAYWRIGHT_TIMEOUT' if isinstance(exc, TimeoutError) else

@@ -101,6 +101,8 @@ class SearchRunManager:
         return True
 
     def _emit(self, line):
+        if line.startswith('Findy safe detail diagnostic: '):
+            return
         safe = None
         with self.lock:
             try:

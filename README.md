@@ -403,3 +403,7 @@ LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI �
 Findy active Search 使用已验证的推荐列表与分页：`python -m scout_agent search findy`，WebUI 来源为 `おすすめ求人`，每轮深页数与最大扫描页可编辑。职位身份为 `findy:<company_id>:<job_key>`，游标为 `findy:おすすめ求人`，独立于其他平台。仅接受 strict Findy detail URL；列表与详情各最多同页等待 4×500ms，身份、canonical、登录或页面结构异常立即安全停止。详情仅解析可见 h1 与固定语义字段，不使用正文兜底。POLICY_VERSION 与历史评价保持不变。
 
 本次实现仅完成虚构数据离线验证；CLI / WebUI live 验收及 supervisor APPROVED 仍待授权环境完成。
+
+Findy Stage B.1 仅补充只读 detail structure diagnostic，正式职责 parser 暂未修改。缺失 title / responsibilities 时，CLI 向 stderr 输出一条 `Findy safe detail diagnostic: <sanitized JSON>`；WebUI 忽略该行，不保存到 summary/state。输出仅含固定 labels、tag/role、最多三层 ancestor、固定关系枚举与 `仕事内容` 后续节点的脱敏 shape，不含正文或职位身份。诊断失败保留原有安全停止原因。
+
+手动 probe 可使用 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform findy`：只 evaluate 已打开标签页，仅 exact `/companies/<numeric>/jobs/<opaque>` 附加同一脱敏结构，不导航或自动登录。等待 supervisor review 后，由用户在授权环境运行同一小预算 CLI 获取 live diagnostic；桥不做 live。

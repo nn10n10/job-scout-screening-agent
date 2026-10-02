@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scout_agent.platform_discovery import SNAPSHOT, collect, evidence, main
+from scout_agent.platform_discovery import SNAPSHOT, FINDY_DETAIL_SNAPSHOT, collect, evidence, main
 
 BASE = 'https://findy-code.io'
 DETAIL = '/companies/123/jobs/opaque-key'
@@ -110,4 +110,4 @@ def test_mocked_cli_findy(monkeypatch, capsys):
     output = capsys.readouterr()
     assert json.loads(output.out)[0]['stable_identity_candidate'] == 'company_id_plus_job_key'
     assert json.loads(output.err)['status'] == 'OK'
-    assert page.method_calls == [('evaluate', (SNAPSHOT,), {})]
+    assert page.method_calls == [('evaluate', (FINDY_DETAIL_SNAPSHOT,), {})]

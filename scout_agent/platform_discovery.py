@@ -8,6 +8,7 @@ import sys
 from urllib.parse import urlsplit, parse_qsl
 
 from scout_agent.lapras_structure import STRUCTURE, sanitize
+from scout_agent.findy_structure import STRUCTURE as FINDY_STRUCTURE, sanitize as sanitize_findy, exact_detail
 
 PLATFORMS = {
     'forkwell': frozenset({'jobs.forkwell.com', 'forkwell.com'}),
@@ -62,6 +63,10 @@ SNAPSHOT = """() => {
 
 LAPRAS_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
     "if (!snapshot.login) snapshot.lapras_structure = (" + STRUCTURE + ")(); return snapshot; }"
+
+
+FINDY_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
+    "if (!snapshot.login) snapshot.findy_structure = (" + FINDY_STRUCTURE + ")(); return snapshot; }"
 
 
 def lapras_numeric_detail(platform, url):
@@ -146,6 +151,8 @@ def evidence(platform, url, snapshot):
     )
     if platform == 'findy':
         result.update(findy_evidence(url, snapshot, links))
+        if exact_detail(url) and 'findy_structure' in snapshot:
+            result['findy_structure'] = sanitize_findy(snapshot['findy_structure'])
         candidates = result['job_link_patterns']
         result['candidate_job_link_patterns'] = candidates
         result['stable_id_candidates'] = []
@@ -304,7 +311,8 @@ def collect(browser, platforms):
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                script = LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT
+                script = (FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
+                          LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT)
                 snapshot = page.evaluate(script)
                 if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
                     output.append(failure(platform, 'NEEDS_LOGIN'))

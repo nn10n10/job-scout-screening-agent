@@ -11,7 +11,7 @@ from scout_agent.lapras_structure import STRUCTURE, sanitize
 from scout_agent.platform_discovery import collect, evidence, LAPRAS_DETAIL_SNAPSHOT, SNAPSHOT
 
 
-def run_tree(tree):
+def run_tree(tree, structure=STRUCTURE, path="/companies/900001/jobs/fictional-key"):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node unavailable for fictional DOM verification')
@@ -41,7 +41,7 @@ globalThis.document = {title: 'FICTIONAL_SECRET_TITLE',
  querySelectorAll: () => all,
  querySelector: s => s === 'meta[property="og:title"]' ? {content: 'FICTIONAL_SECRET_OG'} : null};
 '''.replace('TREE', tree)
-    result = subprocess.run([node, '-e', script + '\nconsole.log(JSON.stringify((' + STRUCTURE + ')()));'],
+    result = subprocess.run([node, '-e', script + '\nglobalThis.location = {protocol: "https:", host: "findy-code.io", pathname: ' + json.dumps(path) + '};\nconsole.log(JSON.stringify((' + structure + ')()));'],
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert 'FICTIONAL_SECRET' not in result.stdout
