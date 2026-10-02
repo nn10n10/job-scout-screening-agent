@@ -297,19 +297,20 @@ for (const name of names) form.elements[name] = {
    assert.equal(selector, '.field'); return fields[name];
  }};
 const configLimits = {coverage_pages:[2],max_depth:[15]};
-const platformSources = {green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索']};
+const platformSources = {green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索'],type:['IT・Webエンジニア']};
 const note = {hidden:true};
 const document = {getElementById:()=>note, createElement:()=>({append(){}}),
  createTextNode:value=>value};
 """ + render + r"""
-for (const platform of ['green','lapras','forkwell','lapras','green']) {
+for (const platform of ['green','type','lapras','forkwell','type','green']) {
  form.elements.platform.value = platform;
  renderSources();
  for (const name of names) {
-   assert.equal(fields[name].hidden, platform === 'lapras');
-   assert.equal(form.elements[name].disabled, platform === 'lapras');
+   assert.equal(fields[name].hidden, ['lapras','type'].includes(platform));
+   assert.equal(form.elements[name].disabled, ['lapras','type'].includes(platform));
  }
- assert.equal(note.hidden, platform !== 'lapras');
+ assert.equal(note.hidden, !['lapras','type'].includes(platform));
+ if (platform === 'type') assert.equal(note.textContent, 'Type 当前只扫描已验证的第一页，offset 分页尚未验证');
 }
 console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
 """
@@ -351,6 +352,60 @@ const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render)
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['おすすめ求人'], limits), null);
 console.log('Findy platform and source survive reload; cross-platform sources rejected');
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'cross-platform sources rejected' in result.stdout
+
+
+def test_type_config_survives_reload(tmp_path):
+    script = Path('scout_agent/web/static/search_config.js').read_text()
+    script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += r'''
+const assert = require('node:assert/strict');
+let stored;
+global.sessionStorage = {getItem: () => stored, setItem: (_, value) => stored = value};
+function form() {
+  const f = {elements: {platform: {value: 'green'}}, inputs: [],
+    numbers: Object.entries(limits).map(([name,[value]]) => ({name,value})),
+    querySelectorAll(s) {
+      if (s === '[type=number]') return this.numbers;
+      if (s === '[name=sources]') return this.inputs;
+      if (s === '[name=sources]:checked') return this.inputs.filter(i => i.checked);
+      throw Error(s);
+    }};
+  f.render = () => f.inputs = (f.elements.platform.value === 'type' ? ['IT・Webエンジニア'] : ['AWS'])
+    .map(value => ({value, checked:true}));
+  f.render(); return f;
+}
+const first = form(); first.elements.platform.value = 'type'; first.render();
+first.numbers.find(i => i.name === 'coverage_pages').value = '-9';
+first.numbers.find(i => i.name === 'max_depth').value = '1';
+
+assert.equal(SearchConfig.save(first, limits), true);
+assert.equal(JSON.parse(stored).platform, 'type');
+const normalized = JSON.parse(stored);
+for (const name of ['coverage_pages', 'max_depth']) assert.equal(normalized[name], limits[name][0]);
+for (const platform of ['green', 'forkwell']) {
+  assert.equal(SearchConfig.validate({...normalized, platform, max_depth:1}, ['IT・Webエンジニア'], limits), null);
+  assert.equal(SearchConfig.validate({...normalized, platform, coverage_pages:-9}, ['IT・Webエンジニア'], limits), null);
+}
+stored = JSON.stringify({...normalized, coverage_pages:'invalid', max_depth:1});
+
+const second = form(); SearchConfig.restore(second, limits, second.render);
+assert.equal(second.elements.platform.value, 'type');
+assert.deepEqual(second.inputs.map(i => i.value), ['IT・Webエンジニア']);
+for (const name of ['coverage_pages', 'max_depth']) {
+  assert.equal(second.numbers.find(i => i.name === name).value, limits[name][0]);
+}
+
+assert.equal(SearchConfig.save(second, limits), true);
+const good = stored;
+stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+assert.equal(fallback.elements.platform.value, 'green');
+assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['IT・Webエンジニア'], limits), null);
+console.log('Type platform and source survive reload; cross-platform sources rejected');
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

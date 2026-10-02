@@ -173,7 +173,7 @@ CLI live / WebUI live 未运行；候选池真实 badge/link 验收仍待授权�
 ### type.jp：Stage A.1 只读 discovery
 
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform type`
-仅 evaluate 用户已打开的 type 标签页，不导航、刷新或点击；尚未实现正式 Search adapter。
+该阶段仅 evaluate 用户已打开的 type 标签页，不导航、刷新或点击；当时尚未实现正式 Search adapter。
 exact `/job/search/` 为搜索入口，不能计入职位链接。exact detail shape
 `/job-:id/:id_detail/` 仅输出脱敏位置证据；只有当前 URL 和同域 canonical
 指向同一 exact detail path，才输出 `category_plus_job_id` 候选枚举，仍不代表
@@ -183,3 +183,57 @@ exact `/job/search/` 为搜索入口，不能计入职位链接。exact detail s
 分页仅输出固定 key、path pattern 和 control kind；允许 `page/p/cursor/offset`
 及固定枚举 `pageNo/pageNum/pageNumber`，不输出参数值，不实现自动分页。
 字段标题仅输出既有 allowlist。等待 supervisor 获取并验收 live 结构证据后再决定下一阶段。
+
+### Type Stage B：已验证入口的单页版（离线实现）
+
+supervisor 已验收 Stage A 入口、exact detail、same-path canonical 与
+`category_plus_job_id` 证据，允许实现 Stage B。分页只确认 `offset` key、
+`/job/search/` path 和 page-number control，未证明 value/stride，所以仍禁用分页。
+
+`python -m scout_agent search type` 使用固定 source `IT・Webエンジニア`，
+导航 `https://type.jp/job-1/`，最终仅允许同域 exact `/job-1/` 或 `/job/search/`。
+身份只接受 exact `/job-<numeric>/<numeric>_detail/`，保存为
+`type:<category_id>:<job_id>`；query、fragment、foreign origin 和额外路径均拒绝。
+列表按组合身份去重，零 exact 链接安全停止，不推断空结果或分页结束。
+列表和详情首次读取后最多同页重试 4×500ms；登录、加载/忙碌状态、
+malformed 结构及身份漂移安全停止，不 reload/click/form。
+详情仅解析 visible h1 和固定字段的局部 semantic 内容；每次读取前后验证
+current URL 与 same-job canonical。缺职责不会以技术关键词替代。
+
+WebUI 增加 Type、固定 source、Type badge 和验证后的原始链接；隐藏并禁用
+coverage_pages/max_depth，显示“Type 当前只扫描已验证的第一页，offset 分页尚未验证”。
+服务端忽略这些分页参数，实际永远扫描 page 1；不读写 Type source cursor，
+缓存和人工状态沿用平台 namespace，其他平台不变。
+Search recall-first 和 `POLICY_VERSION=green-search-0.1.1` 均保持。
+
+`tests/test_type_search.py` 覆盖 strict URL、入口 landing/drift、去重、就绪重试、
+malformed/login/loading、canonical/current identity、semantic fields/boundary、
+缓存/人工状态/游标隔离、CLI/WebUI 和安全遥测。
+`tests/test_web_search_config.py` 覆盖 Type 配置恢复与分页字段切换。
+全部使用虚构 DOM/snapshot、mock 模型和临时 SQLite；真实浏览器、真实数据库、
+招聘网站、网络和付费模型访问：none。当前无 subagent 工具，由主 Agent 自行验证。
+
+普通 pytest 在 sandbox 的既有 TestClient 等待处中止（退出码 130，无最终摘要）；
+最终全量沿用前文 bounded_select 测试进程 workaround，未更改生产事件循环：
+
+```bash
+TMPDIR="$PWD/.test-tmp" /home/zmang/scoutfilter/scout-agent/.venv/bin/python - <<'PY'
+import selectors
+import pytest
+original = selectors.EpollSelector.select
+def bounded_select(self, timeout=None):
+    return original(self, 0.05 if timeout is None else min(timeout, 0.05))
+selectors.EpollSelector.select = bounded_select
+raise SystemExit(pytest.main(['-q', '--basetemp=.test-tmp/final-full']))
+PY
+```
+
+CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent search type --help`，
+退出码 0，stdout 包含 `{green,forkwell,lapras,findy,type}`、`IT・Webエンジニア`；
+仅 help，没有启动 Search。
+CLI live / WebUI live 与真实 badge/link 验收：not run。等待 supervisor 验收；
+bridge 独立验证并处理 commit/push/PR，本任务不提交、不修改 Git 元数据、不 merge。
+
+最终全量退出码 0：`1202 passed, 1 warning in 41.95s`；failed/skipped/xfailed：none。
+唯一 warning 为既有 `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
+`git diff --check` 与 `git diff --cached --check` 均退出码 0，无输出。

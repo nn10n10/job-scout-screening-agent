@@ -15,8 +15,9 @@ from scout_agent.green_discovery import KEYWORDS, SAFE_REASONS
 from scout_agent.platform_discovery import PLATFORMS
 from scout_agent.forkwell_discovery import SOURCES as FORKWELL_SOURCES
 from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
+from scout_agent.type_search import SOURCES as TYPE_SOURCES
 from scout_agent.findy_search import SOURCES as FINDY_SOURCES
-SEARCH_SOURCES = {'green': KEYWORDS, 'forkwell': FORKWELL_SOURCES, 'lapras': LAPRAS_SOURCES, 'findy': FINDY_SOURCES}
+SEARCH_SOURCES = {'green': KEYWORDS, 'forkwell': FORKWELL_SOURCES, 'lapras': LAPRAS_SOURCES, 'findy': FINDY_SOURCES, 'type': TYPE_SOURCES}
 
 LIMITS = {'coverage_pages': (2, 1, 15), 'max_depth': (15, 2, 100),
           'max_jobs': (30, 1, 500), 'max_model_jobs': (20, 1, 200),
@@ -42,7 +43,7 @@ def validate_config(data):
     if 'platform' in data:
         config['platform'] = platform
     for name, (default, low, high) in LIMITS.items():
-        value = (default if platform == 'lapras' and name in {'coverage_pages', 'max_depth'}
+        value = (default if platform in {'lapras', 'type'} and name in {'coverage_pages', 'max_depth'}
                  else data.get(name, default))
         if type(value) is not int or not low <= value <= high:
             raise ValueError(f'{name} 必须为 {low}–{high} 的整数')
@@ -114,10 +115,10 @@ class SearchRunManager:
                 self.state['error'] = 'NEEDS_LOGIN'
                 return
             context = re.fullmatch(
-                r'(?:Green|Forkwell|LAPRAS|Findy) safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
-            if context and context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, 'NONE') and context[3] in SAFE_REASONS:
+                r'(?:Green|Forkwell|LAPRAS|Findy|Type) safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
+            if context and context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, 'NONE') and context[3] in SAFE_REASONS:
                 page = int(context[2])
-                if (context[1] == 'NONE' and page == 0) or (context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES) and page > 0):
+                if (context[1] == 'NONE' and page == 0) or (context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES) and page > 0):
                     self.state.update(error='green_safety_stop',
                                       failed_source=None if context[1] == 'NONE' else context[1],
                                       failed_page=page or None, safe_reason=context[3])
@@ -132,7 +133,7 @@ class SearchRunManager:
                 if match and match[1] in COUNTS:
                     self.state['stats'][match[1]] = int(match[2])
                     safe = line
-                for source in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES):
+                for source in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES):
                     if re.fullmatch(r'Search progress: ' + re.escape(source) + r' page [0-9]{1,3}', line):
                         safe = line
                     pages = re.fullmatch(re.escape(source) + r' pages: ([0-9]{1,3}(?:,[0-9]{1,3}){0,100})', line)

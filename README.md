@@ -2,7 +2,7 @@
 
 这是一个在本机运行的只读 Scout 初筛框架。`generic` 用虚构 fixture 演示完整流程；`green`、`type` 和 doda 的企业オファー可通过已登录的 Windows Chrome 读取真实 Scout 与相关职位。Forkwell 已提供主动 Search 适配；Forkwell / LAPRAS 的 Scout 消息适配器尚未实现。不会自动登录、応募或发送消息。
 
-Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green、Forkwell、LAPRAS 或 Findy 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
+Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增量扫描，复用本地筛选、AI 评价、缓存与人工状态。CLI 使用 `python -m scout_agent search forkwell`；WebUI 每次选择 Green、Forkwell、LAPRAS、Findy 或 Type 一个平台。关键词/职种筛选暂未接入。授权的真实环境可先手动打开搜索结果页及一个职位详情页，再运行
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform forkwell`。
 该 probe 只读取既有标签页，不导航、点击或刷新。JSON 包含 `page_kind` 候选、职位链接数量和脱敏路径、
 分页路径与固定 query-key（`page`、`p`、`cursor`、`offset`）、next/prev/page-number 候选、
@@ -11,6 +11,8 @@ Forkwell 主动 Search 支持 `/jobs` 与 `/jobs/search?page=N` 广义列表增�
 adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，使用数字职位 ID 和严格 URL 白名单；详情仅解析语义标题/字段，必须有同职位 canonical、职位标题和职责。缺字段、陌生路由、加载中、无有效链接均安全停止，不推定空结果。登录失效输出 `NEEDS_LOGIN`，只允许手动登录；不自动 OAuth、不回退 legacy 浏览器。本轮仅完成虚构离线验证，真实 DOM 解析与分页稳定性仍待授权 live 验收。
 
 LAPRAS 已接入 Search adapter、CLI Search 和 WebUI，读取 `/jobs/home` 第一页及 numeric 职位详情。列表尚无 numeric 链接时，仅在同页最多等待 4 次、每次 500ms 并重新读取；耗尽仍安全停止，不推定空结果。详情结构合法但缺标题或职责时，同页最多重读 4 次，每次等待 500ms，并校验导航与同职位 canonical；耗尽才输出脱敏诊断并安全停止。document.title 单独存在不代表详情就绪。WebUI 隐藏 LAPRAS 分页数字字段，固定扫描第一页；live 验收待 supervisor 确认。
+
+Type 已接入单页 Search：`python -m scout_agent search type`，source 为 `IT・Webエンジニア`。入口 `/job-1/` 允许落到同域 `/job/search/`，只采集 exact `/job-<category>/<job>_detail/` 职位并验证同路径 canonical。WebUI 显示 Type badge 和原始链接，隐藏分页字段；固定只扫描已验证的第一页，offset 分页尚未验证，不推进来源游标。沿用 Search recall-first 规则，真实 CLI / WebUI 验收仍待 supervisor。
 在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
 无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
