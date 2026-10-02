@@ -120,7 +120,7 @@ def main(
     from scout_agent.green_discovery import KEYWORDS
     search.add_argument("--coverage-pages", type=_positive_int, default=2, help="每 source 每次深页数量（默认 2）")
     search.add_argument("--max-depth", type=_positive_int, default=15, help="轮转最大页码（默认 15，至少 2）")
-    search.add_argument("--keyword", action="append", choices=(*KEYWORDS, "求人一覧", "求人検索", "おすすめ求人", "IT・Webエンジニア"), help="已验证 source label，可重复；不是任意关键词搜索")
+    search.add_argument("--keyword", action="append", choices=(*KEYWORDS, "求人一覧", "求人検索", "おすすめ求人", "サーバ・クラウド（設計・構築）", "DevOps・SRE"), help="已验证 source label，可重复；不是任意关键词搜索")
     search.add_argument("--probe", action="store_true", help="CDP 只读结构检查：0 模型调用、无数据库/报告；每来源仅第一页，最多 5 个详情")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())

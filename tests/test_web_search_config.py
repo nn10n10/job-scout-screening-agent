@@ -290,16 +290,17 @@ def test_paging_fields_visibility_switches_with_platform():
 const assert = require('node:assert/strict');
 const names = ['coverage_pages', 'max_depth'];
 const fields = Object.fromEntries(names.map(n => [n, {hidden:false}]));
+let rendered = [];
 const form = {elements:{platform:{value:'green'}},
- querySelector:()=>({replaceChildren(){}, append(){}})};
+ querySelector:()=>({replaceChildren(){rendered=[]}, append(label){rendered.push(label.input)}})};
 for (const name of names) form.elements[name] = {
  value:99, disabled:false, closest(selector) {
    assert.equal(selector, '.field'); return fields[name];
  }};
 const configLimits = {coverage_pages:[2],max_depth:[15]};
-const platformSources = {green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索'],type:['IT・Webエンジニア']};
+const platformSources = {green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索'],type:['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
 const note = {hidden:true};
-const document = {getElementById:()=>note, createElement:()=>({append(){}}),
+const document = {getElementById:()=>note, createElement:()=>({append(input){this.input=input}}),
  createTextNode:value=>value};
 """ + render + r"""
 for (const platform of ['green','type','lapras','forkwell','type','green']) {
@@ -310,7 +311,11 @@ for (const platform of ['green','type','lapras','forkwell','type','green']) {
    assert.equal(form.elements[name].disabled, ['lapras','type'].includes(platform));
  }
  assert.equal(note.hidden, !['lapras','type'].includes(platform));
- if (platform === 'type') assert.equal(note.textContent, 'Type 当前只扫描已验证的第一页，offset 分页尚未验证');
+ if (platform === 'type') {
+   assert.deepEqual(rendered.map(i=>i.value), ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']);
+   assert.ok(rendered.every(i=>i.checked && i.type==='checkbox'));
+ }
+ if (platform === 'type') assert.equal(note.textContent, 'Type 当前扫描两个已验证职种页的第一页，分页后缀尚未验证');
 }
 console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
 """
@@ -374,7 +379,7 @@ function form() {
       if (s === '[name=sources]:checked') return this.inputs.filter(i => i.checked);
       throw Error(s);
     }};
-  f.render = () => f.inputs = (f.elements.platform.value === 'type' ? ['IT・Webエンジニア'] : ['AWS'])
+  f.render = () => f.inputs = (f.elements.platform.value === 'type' ? ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'] : ['AWS'])
     .map(value => ({value, checked:true}));
   f.render(); return f;
 }
@@ -387,14 +392,14 @@ assert.equal(JSON.parse(stored).platform, 'type');
 const normalized = JSON.parse(stored);
 for (const name of ['coverage_pages', 'max_depth']) assert.equal(normalized[name], limits[name][0]);
 for (const platform of ['green', 'forkwell']) {
-  assert.equal(SearchConfig.validate({...normalized, platform, max_depth:1}, ['IT・Webエンジニア'], limits), null);
-  assert.equal(SearchConfig.validate({...normalized, platform, coverage_pages:-9}, ['IT・Webエンジニア'], limits), null);
+  assert.equal(SearchConfig.validate({...normalized, platform, max_depth:1}, ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'], limits), null);
+  assert.equal(SearchConfig.validate({...normalized, platform, coverage_pages:-9}, ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'], limits), null);
 }
 stored = JSON.stringify({...normalized, coverage_pages:'invalid', max_depth:1});
 
 const second = form(); SearchConfig.restore(second, limits, second.render);
 assert.equal(second.elements.platform.value, 'type');
-assert.deepEqual(second.inputs.map(i => i.value), ['IT・Webエンジニア']);
+assert.deepEqual(second.inputs.map(i => i.value), ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']);
 for (const name of ['coverage_pages', 'max_depth']) {
   assert.equal(second.numbers.find(i => i.name === name).value, limits[name][0]);
 }
@@ -404,7 +409,7 @@ const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
 const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
 assert.equal(fallback.elements.platform.value, 'green');
-assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['IT・Webエンジニア'], limits), null);
+assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'], limits), null);
 console.log('Type platform and source survive reload; cross-platform sources rejected');
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)

@@ -116,6 +116,8 @@ class SearchRunManager:
                 return
             context = re.fullmatch(
                 r'(?:Green|Forkwell|LAPRAS|Findy|Type) safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
+            if context and line.startswith('Type safety stop: ') and context[1] not in (*TYPE_SOURCES, 'NONE'):
+                return
             if context and context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, 'NONE') and context[3] in SAFE_REASONS:
                 page = int(context[2])
                 if (context[1] == 'NONE' and page == 0) or (context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES) and page > 0):

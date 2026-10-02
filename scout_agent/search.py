@@ -447,6 +447,11 @@ def search_command(args, settings, *, adapter=None):
 
     def progress(label, page):
         nonlocal source, number
+        if getattr(args, 'platform', 'green') == 'type':
+            from scout_agent.type_search import SOURCES as TYPE_SOURCES
+            if label not in TYPE_SOURCES:
+                source, number = 'NONE', 0
+                return
         source, number = label, page
         print(f'Search progress: {label} page {page}', flush=True)
 
@@ -501,7 +506,9 @@ def search_command(args, settings, *, adapter=None):
         from scout_agent.type_search import SOURCES as TYPE_SOURCES
         from scout_agent.findy_search import SOURCES as FINDY_SOURCES
         from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
-        if source not in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES):
+        allowed_sources = TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
+            *KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES)
+        if source not in allowed_sources:
             source, number = 'NONE', 0
         platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type'}.get(getattr(args, 'platform', 'green'), 'Green')
         print(f'{platform_label} safety stop: source={source} page={number} category={reason}',

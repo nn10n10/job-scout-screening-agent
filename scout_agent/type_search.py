@@ -10,7 +10,11 @@ from scout_agent.platform_discovery import TYPE_SNAPSHOT as SNAPSHOT, login_url
 from scout_agent.search_platforms import Job, job_identity
 
 ORIGIN = 'https://type.jp'
-SOURCES = ('IT・Webエンジニア',)
+SOURCE_URLS = {
+    'サーバ・クラウド（設計・構築）': ORIGIN + '/job-1/1004/22/',
+    'DevOps・SRE': ORIGIN + '/job-1/1006/161/',
+}
+SOURCES = tuple(SOURCE_URLS)
 JOB_PATH = re.compile(r'/job-([0-9]+)/([0-9]+)_detail/')
 ALIASES = {
     '仕事内容': 'responsibilities',
@@ -112,7 +116,7 @@ class TypeSearchAdapter:
     def source_url(self, label, page=1):
         if label not in SOURCES or type(page) is not int or page != 1:
             raise ValueError('Type 搜索来源或页码无效')
-        return ORIGIN + '/job/search/'
+        return SOURCE_URLS[label]
 
     def validate_job(self, job):
         checked = job_from_url(job.url, {})
@@ -129,7 +133,7 @@ class TypeSearchAdapter:
         if login_url(url, self.platform_key):
             self._stop('NEEDS_LOGIN', stage)
         if self._navigation_stage == Stage.SOURCE_NAVIGATION:
-            if url != ORIGIN + '/job/search/':
+            if url != self._target:
                 self._stop('SOURCE_URL_MISMATCH', stage)
         else:
             try:

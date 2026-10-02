@@ -11,7 +11,7 @@ from scout_agent.web.search_runs import validate_config, SearchRunManager
 from scout_agent.web.viewmodels import search_cards
 
 
-def adapter(snapshot, url='https://type.jp/job/search/'):
+def adapter(snapshot, url='https://type.jp/job-1/1004/22/'):
     a = TypeSearchAdapter()
     a.page = Mock(url=url)
     a.page.evaluate.return_value = {'ready': 'complete', 'login': False, **snapshot}
@@ -21,7 +21,7 @@ def adapter(snapshot, url='https://type.jp/job/search/'):
     ({'busy': True}, 'PARSE_ERROR'), ({'links': []}, 'NO_VALID_JOB_LINKS')])
 def test_list_fail_closed(snapshot, reason):
     a = adapter(snapshot)
-    with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('IT・Webエンジニア', 1)
+    with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == reason
 
 def test_list_readiness_second_snapshot_succeeds():
@@ -30,7 +30,7 @@ def test_list_readiness_second_snapshot_succeeds():
         {'ready': 'complete', 'links': ['/jobs/fictional-sre']},
         {'ready': 'complete', 'links': ['/job-1/900001_detail/']},
     ]
-    assert [j.job_id for j in a.search_cards('IT・Webエンジニア', 1)] == ['type:1:900001']
+    assert [j.job_id for j in a.search_cards('サーバ・クラウド（設計・構築）', 1)] == ['type:1:900001']
     a.page.goto.assert_called_once()
     a.page.wait_for_timeout.assert_called_once_with(500)
     assert a.page.evaluate.call_count == 2
@@ -41,7 +41,7 @@ def test_list_readiness_second_snapshot_succeeds():
 def test_list_readiness_wait_has_hard_limit(links):
     a = adapter({'links': links})
     with pytest.raises(GreenSearchDOMPending) as exc:
-        a.search_cards('IT・Webエンジニア', 1)
+        a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'NO_VALID_JOB_LINKS'
     assert a.page.evaluate.call_count == 6
     assert [call.args for call in a.page.wait_for_timeout.call_args_list] == [(500,)] * 4
@@ -55,7 +55,7 @@ def test_list_readiness_retry_navigation_fails_closed(url, reason):
     a = adapter({'links': []})
     a.page.wait_for_timeout.side_effect = lambda _: setattr(a.page, 'url', url)
     with pytest.raises(GreenSearchDOMPending) as exc:
-        a.search_cards('IT・Webエンジニア', 1)
+        a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == reason
     assert a.page.evaluate.call_count == 1
     a.page.wait_for_timeout.assert_called_once_with(500)
@@ -71,14 +71,14 @@ def test_list_readiness_retry_snapshot_fails_closed(snapshot, reason):
     a = adapter({})
     a.page.evaluate.side_effect = [{'ready': 'complete', 'links': []}, snapshot]
     with pytest.raises(GreenSearchDOMPending) as exc:
-        a.search_cards('IT・Webエンジニア', 1)
+        a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == reason
     assert a.page.evaluate.call_count == 2
     a.page.wait_for_timeout.assert_called_once_with(500)
 
 def test_login_redirect_before_read_and_safe_telemetry(capsys):
     a = adapter({}, 'https://accounts.google.com/signin?private=fictional')
-    with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('IT・Webエンジニア', 1)
+    with pytest.raises(GreenSearchDOMPending) as exc: a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'NEEDS_LOGIN'
     a.page.evaluate.assert_not_called()
     a.ensure_verified = Mock(side_effect=exc.value)
@@ -113,7 +113,7 @@ def test_missing_responsibilities_is_not_invented():
 
 def test_single_platform_web_config_and_runner():
     config = validate_config({'platform': 'type'})
-    assert config['sources'] == ['IT・Webエンジニア']
+    assert config['sources'] == ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']
     with pytest.raises(ValueError): validate_config({'platform': 'type', 'sources': ['AWS']})
     with pytest.raises(ValueError): validate_config({'platform': 'all'})
     calls = []
@@ -146,10 +146,10 @@ def test_type_cache_state_and_green_history_preserved(tmp_path):
         store.save_job(green)
         store.set_user_state(green.job_id, 'EXCLUDED')
         store.advance_source('AWS', 7)
-        _, stats = run_search(a, store, model, keywords=['IT・Webエンジニア'], pages_per_keyword=2)
+        _, stats = run_search(a, store, model, keywords=['サーバ・クラウド（設計・構築）'], pages_per_keyword=2)
         assert stats['unique_jobs'] == 1 and stats['model_jobs'] == 1
         store.set_user_state('type:1:900001', 'APPLIED')
-        _, stats = run_search(a, store, model, keywords=['IT・Webエンジニア'], pages_per_keyword=2)
+        _, stats = run_search(a, store, model, keywords=['サーバ・クラウド（設計・構築）'], pages_per_keyword=2)
         assert stats['cache_hits'] == 1 and stats['model_jobs'] == 0
         assert a.job_detail.call_count == 2  # Broad cards have no hashable JD; details refresh before cache lookup.
         assert model.classify_jobs.call_count == 1
@@ -192,8 +192,8 @@ def test_cli_type_source_without_running_search(monkeypatch):
     calls = []
     monkeypatch.setattr(cli, 'load_settings', lambda: None)
     monkeypatch.setattr(search, 'search_command', lambda args, settings: calls.append(args) or 0)
-    assert cli.main(['search', 'type', '--keyword', 'IT・Webエンジニア']) == 0
-    assert calls[0].platform == 'type' and calls[0].keyword == ['IT・Webエンジニア']
+    assert cli.main(['search', 'type', '--keyword', 'サーバ・クラウド（設計・構築）']) == 0
+    assert calls[0].platform == 'type' and calls[0].keyword == ['サーバ・クラウド（設計・構築）']
 
 def semantic_dom(nodes, og='', title=''):
     """Execute the production JS with fictional elements, never a browser."""
@@ -308,15 +308,15 @@ def test_semantic_fields_and_boundaries():
 
 def test_fixed_safe_telemetry():
     manager = SearchRunManager()
-    manager._emit('Search progress: IT・Webエンジニア page 2')
-    manager._emit('IT・Webエンジニア pages: 1,2')
-    manager._emit('IT・Webエンジニア cursor: 2 → 3')
-    manager._emit('Type safety stop: source=IT・Webエンジニア page=2 category=NO_VALID_JOB_LINKS')
+    manager._emit('Search progress: サーバ・クラウド（設計・構築） page 2')
+    manager._emit('サーバ・クラウド（設計・構築） pages: 1,2')
+    manager._emit('サーバ・クラウド（設計・構築） cursor: 2 → 3')
+    manager._emit('Type safety stop: source=サーバ・クラウド（設計・構築） page=2 category=NO_VALID_JOB_LINKS')
     state = manager.snapshot()
     assert state['safe_reason'] == 'NO_VALID_JOB_LINKS'
     assert state['failed_page'] == 2
-    assert state['stats']['source_pages']['IT・Webエンジニア'] == [1, 2]
-    assert state['stats']['cursors']['IT・Webエンジニア'] == {'before': 2, 'after': 3}
+    assert state['stats']['source_pages']['サーバ・クラウド（設計・構築）'] == [1, 2]
+    assert state['stats']['cursors']['サーバ・クラウド（設計・構築）'] == {'before': 2, 'after': 3}
     before = manager.snapshot()
     manager._emit('Type safety stop: source=PRIVATE page=2 category=NO_VALID_JOB_LINKS')
     assert manager.snapshot() == before
@@ -327,17 +327,17 @@ def test_fixed_safe_telemetry():
 def test_cli_safety_context_is_fixed(monkeypatch, capsys):
     import scout_agent.search as search
     def stop(args, settings, *, adapter, progress):
-        progress('IT・Webエンジニア', 2)
+        progress('サーバ・クラウド（設計・構築）', 2)
         raise GreenSearchDOMPending('JOB_LINKS', 'NO_VALID_JOB_LINKS')
     monkeypatch.setattr(search, '_search_command', stop)
     assert search.search_command(SimpleNamespace(platform='type'), None) == 1
     assert capsys.readouterr().err.strip() == (
-        'Type safety stop: source=IT・Webエンジニア page=2 category=NO_VALID_JOB_LINKS')
+        'Type safety stop: source=サーバ・クラウド（設計・構築） page=2 category=NO_VALID_JOB_LINKS')
 
 
 def test_first_list_success_only_reads_once():
     a = adapter({'links': ['/job-1/900001_detail/']})
-    assert len(a.search_cards('IT・Webエンジニア', 1)) == 1
+    assert len(a.search_cards('サーバ・クラウド（設計・構築）', 1)) == 1
     a.page.evaluate.assert_called_once()
     a.page.goto.assert_called_once()
     a.page.wait_for_timeout.assert_not_called()
@@ -420,20 +420,20 @@ def test_ancestor_skips_hidden_and_empty_siblings():
     assert fields['responsibilities'] == '架空第三层本文'
 
 
-@pytest.mark.parametrize('landing', ['https://type.jp/job/search/'])
+@pytest.mark.parametrize('landing', ['https://type.jp/job-1/1004/22/'])
 def test_verified_source_landing_and_dedup(landing):
     a = adapter({'links': ['/job-1/900001_detail/', 'https://type.jp/job-1/900001_detail/',
         '/job-2/900001_detail/', '/job/search/', '/job-1/', '/job/opaque/']}, landing)
-    assert [j.job_id for j in a.search_cards('IT・Webエンジニア', 1)] == ['type:1:900001', 'type:2:900001']
-    a.page.goto.assert_called_once_with('https://type.jp/job/search/', wait_until='load', timeout=15000)
+    assert [j.job_id for j in a.search_cards('サーバ・クラウド（設計・構築）', 1)] == ['type:1:900001', 'type:2:900001']
+    a.page.goto.assert_called_once_with('https://type.jp/job-1/1004/22/', wait_until='load', timeout=15000)
 
 
-@pytest.mark.parametrize('landing', ['https://type.jp/job-1/', 'https://type.jp/job/search/?offset=fictional',
-    'https://type.jp/job-2/', 'https://evil.test/job/search/', 'https://type.jp/job/search/#fragment'])
+@pytest.mark.parametrize('landing', ['https://type.jp/job-1/', 'https://type.jp/job-1/1004/22/?offset=fictional',
+    'https://type.jp/job-2/', 'https://evil.test/job/search/', 'https://type.jp/job-1/1004/22/#fragment'])
 def test_source_drift_rejected(landing):
     a = adapter({}, landing)
     with pytest.raises(GreenSearchDOMPending) as exc:
-        a.search_cards('IT・Webエンジニア', 1)
+        a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'SOURCE_URL_MISMATCH'
     a.page.evaluate.assert_not_called()
 
@@ -442,21 +442,21 @@ def test_single_page_and_namespace(tmp_path):
     from scout_agent.search import SearchStore, SearchEvaluation, run_search, POLICY_VERSION
     from scout_agent.storage.db import Database
     a = TypeSearchAdapter()
-    assert a.source_url('IT・Webエンジニア', 1) == 'https://type.jp/job/search/'
+    assert a.source_url('サーバ・クラウド（設計・構築）', 1) == 'https://type.jp/job-1/1004/22/'
     for page in [0, 2, True]:
-        with pytest.raises(ValueError): a.source_url('IT・Webエンジニア', page)
+        with pytest.raises(ValueError): a.source_url('サーバ・クラウド（設計・構築）', page)
     a.search_cards = Mock(side_effect=lambda *_: [job_from_url('/job-1/900001_detail/', {})])
     a.job_detail = Mock(return_value={'title': 'Fictional SRE', 'responsibilities': 'Cloud 基盤設計運用'})
     model = Mock(model_name='fictional-mock')
     model.classify_jobs.return_value = {'type:1:900001': SearchEvaluation(verdict='POSSIBLE', summary='待确认')}
     with Database(tmp_path / 'fictional.db') as db:
         store = SearchStore(db)
-        sources = ['AWS', 'forkwell:求人一覧', 'lapras:求人検索', 'findy:おすすめ求人', 'type:IT・Webエンジニア']
+        sources = ['AWS', 'forkwell:求人一覧', 'lapras:求人検索', 'findy:おすすめ求人', 'type:サーバ・クラウド（設計・構築）']
         for source in sources: store.advance_source(source, 7)
         for _ in range(2):
-            _, stats = run_search(a, store, model, keywords=['IT・Webエンジニア'],
+            _, stats = run_search(a, store, model, keywords=['サーバ・クラウド（設計・構築）'],
                 pages_per_keyword=None, coverage_pages=4, max_depth=20)
-            assert stats['source_pages']['IT・Webエンジニア'] == [1]
+            assert stats['source_pages']['サーバ・クラウド（設計・構築）'] == [1]
         assert stats['cache_hits'] == 1 and model.classify_jobs.call_count == 1
         for source in sources: assert store.source_cursor(source, 20) == 7
     assert POLICY_VERSION == 'green-search-0.1.1'
@@ -468,11 +468,11 @@ def test_type_web_single_page_controls(tmp_path):
     with TestClient(create_app(tmp_path / 'fictional.db', search_runner=lambda *args: 0)) as client:
         html = client.get('/search').text
         assert '<option value="type">Type</option>' in html
-        assert "type: ['IT・Webエンジニア']" in html
+        assert "type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']" in html
         assert "|| form.elements.platform.value === 'type'" in html
-        assert 'Type 当前只扫描已验证的第一页，offset 分页尚未验证' in html
+        assert 'Type 当前扫描两个已验证职种页的第一页，分页后缀尚未验证' in html
     config = validate_config({'platform': 'type', 'coverage_pages': 'ignored', 'max_depth': None})
-    assert config['sources'] == ['IT・Webエンジニア']
+    assert config['sources'] == ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']
 
 
 @pytest.mark.parametrize('boundary', ['募集要項', '勤務時間', '雇用形態', '福利厚生'])
@@ -492,7 +492,7 @@ def test_type_field_aliases(label, key):
 def test_malformed_link_collection_stops_immediately(links):
     a = adapter({'links': links})
     with pytest.raises(GreenSearchDOMPending) as exc:
-        a.search_cards('IT・Webエンジニア', 1)
+        a.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'PARSE_ERROR'
     a.page.wait_for_timeout.assert_not_called()
 
@@ -514,3 +514,106 @@ def test_current_identity_change_during_detail_read():
     a.page.evaluate.side_effect = read
     with pytest.raises(GreenSearchDOMPending) as exc: a.job_detail(job)
     assert exc.value.reason == 'JOB_URL_MISMATCH'
+
+
+@pytest.mark.parametrize('label,url', [
+    ('サーバ・クラウド（設計・構築）', 'https://type.jp/job-1/1004/22/'),
+    ('DevOps・SRE', 'https://type.jp/job-1/1006/161/'),
+])
+def test_each_verified_source_exact_route_and_links(label, url):
+    a = adapter({'links': ['/job-1/900001_detail/', '/job-2/900001_detail/']}, url)
+    assert a.source_url(label) == url
+    assert [j.job_id for j in a.search_cards(label, 1)] == ['type:1:900001', 'type:2:900001']
+    a.page.goto.assert_called_once_with(url, wait_until='load', timeout=15000)
+
+
+@pytest.mark.parametrize('label', ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'])
+@pytest.mark.parametrize('drift', ['swapped', '?', '#', '?private=fictional', '#fragment',
+    'https://foreign.test/job-1/1004/22/', 'https://type.jp/job/search/', 'https://type.jp/job-1/'])
+def test_each_source_navigation_allowlist(label, drift):
+    from scout_agent.type_search import SOURCE_URLS
+    url = SOURCE_URLS[label]
+    if drift == 'swapped':
+        url = next(value for key, value in SOURCE_URLS.items() if key != label)
+    elif drift.startswith(('?', '#')):
+        url += drift
+    else:
+        url = drift
+    a = adapter({'links': ['/job-1/900001_detail/']}, url)
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.search_cards(label, 1)
+    assert exc.value.reason == 'SOURCE_URL_MISMATCH'
+    a.page.evaluate.assert_not_called()
+
+
+def test_two_sources_dedup_and_cursor_history_untouched(tmp_path):
+    from scout_agent.type_search import SOURCES
+    from scout_agent.search import SearchStore, SearchEvaluation, run_search
+    from scout_agent.storage.db import Database
+    a = TypeSearchAdapter()
+    a.search_cards = Mock(side_effect=lambda *_: [job_from_url('/job-1/900001_detail/', {})])
+    a.job_detail = Mock(return_value={'title': 'Fictional SRE', 'responsibilities': 'Cloud 基盤設計運用'})
+    model = Mock(model_name='fictional-mock')
+    model.classify_jobs.return_value = {'type:1:900001': SearchEvaluation(verdict='POSSIBLE', summary='待确认')}
+    with Database(tmp_path / 'fictional.db') as db:
+        store = SearchStore(db)
+        history = ['AWS', 'forkwell:求人一覧', 'lapras:求人検索', 'findy:おすすめ求人',
+                   'type:IT・Webエンジニア', *(f'type:{label}' for label in SOURCES)]
+        for source in history:
+            store.advance_source(source, 7)
+        _, stats = run_search(a, store, model, keywords=SOURCES, pages_per_keyword=None)
+        assert stats['raw_cards'] == 2 and stats['unique_jobs'] == 1
+        assert stats['source_pages'] == {label: [1] for label in SOURCES}
+        assert stats['cursors'] == {}
+        assert a.search_cards.call_args_list == [((label, 1),) for label in SOURCES]
+        assert a.job_detail.call_count == 1 and model.classify_jobs.call_count == 1
+        assert set(store.existing_job('type:1:900001').matched_keywords) == set(SOURCES)
+        for source in history:
+            assert store.source_cursor(source, 15) == 7
+
+
+@pytest.mark.parametrize('label', ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'])
+def test_new_source_cli_and_safe_telemetry(label, monkeypatch, capsys):
+    import scout_agent.cli as cli
+    import scout_agent.search as search
+    monkeypatch.setattr(cli, 'load_settings', lambda: None)
+    def stop(args, settings, *, adapter, progress):
+        progress(args.keyword[0], 1)
+        raise GreenSearchDOMPending('JOB_LINKS', 'NO_VALID_JOB_LINKS')
+    monkeypatch.setattr(search, '_search_command', stop)
+    assert cli.main(['search', 'type', '--keyword', label]) == 1
+    assert capsys.readouterr().err.strip() == f'Type safety stop: source={label} page=1 category=NO_VALID_JOB_LINKS'
+    manager = SearchRunManager()
+    manager._emit(f'Type safety stop: source={label} page=1 category=NO_VALID_JOB_LINKS')
+    assert manager.snapshot()['safe_reason'] == 'NO_VALID_JOB_LINKS'
+    before = manager.snapshot()
+    manager._emit('Type safety stop: source=IT・Webエンジニア page=1 category=NO_VALID_JOB_LINKS')
+    manager._emit('Type safe source diagnostic: private fictional data')
+    assert manager.snapshot() == before
+
+
+def test_legacy_source_rejected_in_production(monkeypatch):
+    import scout_agent.cli as cli
+    monkeypatch.setattr(cli, 'load_settings', lambda: None)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['search', 'type', '--keyword', 'IT・Webエンジニア'])
+    assert exc.value.code == 2
+    with pytest.raises(ValueError): TypeSearchAdapter().source_url('IT・Webエンジニア')
+    with pytest.raises(ValueError): validate_config({'platform': 'type', 'sources': ['IT・Webエンジニア']})
+
+
+@pytest.mark.parametrize('label', ['IT・Webエンジニア', 'AWS', '求人一覧', 'PRIVATE'])
+def test_type_cli_telemetry_rejects_other_sources(label, monkeypatch, capsys):
+    import scout_agent.search as search
+    def stop(args, settings, *, adapter, progress):
+        progress(label, 1)
+        raise GreenSearchDOMPending('JOB_LINKS', 'NO_VALID_JOB_LINKS')
+    monkeypatch.setattr(search, '_search_command', stop)
+    assert search.search_command(SimpleNamespace(platform='type'), None) == 1
+    output = capsys.readouterr()
+    assert output.out == ''
+    assert output.err.strip() == 'Type safety stop: source=NONE page=0 category=NO_VALID_JOB_LINKS'
+    manager = SearchRunManager()
+    before = manager.snapshot()
+    manager._emit(f'Type safety stop: source={label} page=1 category=NO_VALID_JOB_LINKS')
+    assert manager.snapshot() == before

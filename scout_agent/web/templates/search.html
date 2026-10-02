@@ -58,7 +58,7 @@
 const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');
 const configLimits = {{ limits|tojson }};
-const platformSources = {green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['IT・Webエンジニア']};
+const platformSources = {green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
 function renderSources() {
   const container = form.querySelector('.search-source-options');
   const singlePage = form.elements.platform.value === 'lapras' || form.elements.platform.value === 'type';
@@ -69,7 +69,7 @@ function renderSources() {
   }
   document.getElementById('pagination-note').hidden = !singlePage;
   document.getElementById('pagination-note').textContent = form.elements.platform.value === 'type'
-    ? 'Type 当前只扫描已验证的第一页，offset 分页尚未验证'
+    ? 'Type 当前扫描两个已验证职种页的第一页，分页后缀尚未验证'
     : 'LAPRAS 当前固定扫描 /jobs/home 第一页，分页尚未验证。';
   container.replaceChildren();
   for (const value of platformSources[form.elements.platform.value]) {

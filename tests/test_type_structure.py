@@ -82,16 +82,16 @@ def test_js_counts_only(path, route, canonical, kind):
 @pytest.mark.parametrize('diagnostic', [unsafe(), RuntimeError('SECRET')])
 def test_capture_failure_and_reset(diagnostic):
     adapter = TypeSearchAdapter()
-    adapter.page = Mock(url='https://type.jp/job/search/')
+    adapter.page = Mock(url='https://type.jp/job-1/1004/22/')
     snapshot = {'ready': 'complete', 'links': []}
     adapter.page.evaluate.side_effect = [snapshot] * 5 + [diagnostic]
     with pytest.raises(GreenSearchDOMPending) as exc:
-        adapter.search_cards('IT・Webエンジニア', 1)
+        adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'NO_VALID_JOB_LINKS'
     assert adapter.page.evaluate.call_args.args == (SOURCE_STRUCTURE,)
     assert adapter.last_safe_source_diagnostic == (None if isinstance(diagnostic, Exception) else sanitize(diagnostic))
     adapter.page.evaluate.side_effect = [{'ready': 'complete', 'links': ['/job-987654/876543_detail/']}]
-    assert adapter.search_cards('IT・Webエンジニア', 1)
+    assert adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert adapter.last_safe_source_diagnostic is None
 
 
@@ -131,21 +131,21 @@ def test_web_ignores_diagnostic():
 def test_capture_only_after_five_empty_snapshots(snapshot, reason):
     adapter = TypeSearchAdapter()
     adapter.last_safe_source_diagnostic = sanitize(unsafe())
-    adapter.page = Mock(url='https://type.jp/job/search/')
+    adapter.page = Mock(url='https://type.jp/job-1/1004/22/')
     adapter.page.evaluate.return_value = {'ready': 'complete', 'links': [], **snapshot}
     if reason:
         with pytest.raises(GreenSearchDOMPending) as exc:
-            adapter.search_cards('IT・Webエンジニア', 1)
+            adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
         assert exc.value.reason == reason
     else:
-        assert adapter.search_cards('IT・Webエンジニア', 1)
+        assert adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert adapter.last_safe_source_diagnostic is None
     assert adapter.page.evaluate.call_count == 1
 
 
 def test_diagnostic_navigation_exception_keeps_primary_failure():
     adapter = TypeSearchAdapter()
-    adapter.page = Mock(url='https://type.jp/job/search/')
+    adapter.page = Mock(url='https://type.jp/job-1/1004/22/')
     calls = 0
     def evaluate(script):
         nonlocal calls
@@ -156,7 +156,7 @@ def test_diagnostic_navigation_exception_keeps_primary_failure():
         return {'ready': 'complete', 'links': []}
     adapter.page.evaluate.side_effect = evaluate
     with pytest.raises(GreenSearchDOMPending) as exc:
-        adapter.search_cards('IT・Webエンジニア', 1)
+        adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'NO_VALID_JOB_LINKS'
     assert adapter.last_safe_source_diagnostic is None
 
@@ -166,7 +166,7 @@ def test_category_landing_without_jobs_is_rejected():
     adapter.page = Mock(url='https://type.jp/job-1/')
     adapter.page.evaluate.return_value = {'ready': 'complete', 'links': []}
     with pytest.raises(GreenSearchDOMPending) as exc:
-        adapter.search_cards('IT・Webエンジニア', 1)
+        adapter.search_cards('サーバ・クラウド（設計・構築）', 1)
     assert exc.value.reason == 'SOURCE_URL_MISMATCH'
     adapter.page.evaluate.assert_not_called()
     assert adapter.last_safe_source_diagnostic is None

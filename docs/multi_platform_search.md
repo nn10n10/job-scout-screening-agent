@@ -187,14 +187,17 @@ exact `/job/search/` 为搜索入口，不能计入职位链接。exact detail s
 ### Type Stage B：已验证入口的单页版（离线实现）
 
 supervisor 已验收 Stage A 入口、exact detail、same-path canonical 与
-`category_plus_job_id` 证据，允许实现 Stage B。分页只确认 `offset` key、
-`/job/search/` path 和 page-number control，未证明 value/stride，所以仍禁用分页。
+`category_plus_job_id` 证据，允许实现 Stage B。固定职种页暴露 page-number control，
+但分页 suffix 规则尚未证明，所以保持单页，不生成 page2 route。
 
-`python -m scout_agent search type` 使用固定 source `IT・Webエンジニア`，
-直接导航已 live 验证的 `https://type.jp/job/search/` 第一页，最终仅接受该 exact URL，
-query、fragment、foreign origin 和其他路径均安全停止。
-`/job-1/` 已由 live diagnostic 确认为 category landing，零 exact detail links，
-不作为 production source。保留 Type source safe diagnostic，WebUI 仍忽略 diagnostic。
+`python -m scout_agent search type` 默认扫描两个固定 source：
+- `サーバ・クラウド（設計・構築）` → `https://type.jp/job-1/1004/22/`
+- `DevOps・SRE` → `https://type.jp/job-1/1006/161/`
+
+只接受与当前 source 完全一致的 URL，query、fragment、foreign origin、
+其他路径和另一个 source URL 均安全停止。`/job/search/` 只是 search-entry；
+`/job-1/` 是 category landing，均不作为 production source。
+保留 Type source safe diagnostic，WebUI 仍忽略 diagnostic。旧 source key 仅保留历史，无需迁移。
 身份只接受 exact `/job-<numeric>/<numeric>_detail/`，保存为
 `type:<category_id>:<job_id>`；query、fragment、foreign origin 和额外路径均拒绝。
 列表按组合身份去重，零 exact 链接安全停止，不推断空结果或分页结束。
@@ -204,7 +207,7 @@ malformed 结构及身份漂移安全停止，不 reload/click/form。
 current URL 与 same-job canonical。缺职责不会以技术关键词替代。
 
 WebUI 增加 Type、固定 source、Type badge 和验证后的原始链接；隐藏并禁用
-coverage_pages/max_depth，显示“Type 当前只扫描已验证的第一页，offset 分页尚未验证”。
+coverage_pages/max_depth，显示“Type 当前扫描两个已验证职种页的第一页，分页后缀尚未验证”。
 服务端忽略这些分页参数，实际永远扫描 page 1；不读写 Type source cursor，
 缓存和人工状态沿用平台 namespace，其他平台不变。
 Search recall-first 和 `POLICY_VERSION=green-search-0.1.1` 均保持。
@@ -232,7 +235,7 @@ PY
 ```
 
 CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent search type --help`，
-退出码 0，stdout 包含 `{green,forkwell,lapras,findy,type}`、`IT・Webエンジニア`；
+退出码 0，stdout 包含 `{green,forkwell,lapras,findy,type}`、`サーバ・クラウド（設計・構築）`、`DevOps・SRE`；
 仅 help，没有启动 Search。
 CLI live / WebUI live 与真实 badge/link 验收：not run。等待 supervisor 验收；
 bridge 独立验证并处理 commit/push/PR，本任务不提交、不修改 Git 元数据、不 merge。
