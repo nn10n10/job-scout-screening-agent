@@ -82,7 +82,7 @@ def test_js_counts_only(path, route, canonical, kind):
 @pytest.mark.parametrize('diagnostic', [unsafe(), RuntimeError('SECRET')])
 def test_capture_failure_and_reset(diagnostic):
     adapter = TypeSearchAdapter()
-    adapter.page = Mock(url='https://type.jp/job-1/')
+    adapter.page = Mock(url='https://type.jp/job/search/')
     snapshot = {'ready': 'complete', 'links': []}
     adapter.page.evaluate.side_effect = [snapshot] * 5 + [diagnostic]
     with pytest.raises(GreenSearchDOMPending) as exc:
@@ -131,7 +131,7 @@ def test_web_ignores_diagnostic():
 def test_capture_only_after_five_empty_snapshots(snapshot, reason):
     adapter = TypeSearchAdapter()
     adapter.last_safe_source_diagnostic = sanitize(unsafe())
-    adapter.page = Mock(url='https://type.jp/job-1/')
+    adapter.page = Mock(url='https://type.jp/job/search/')
     adapter.page.evaluate.return_value = {'ready': 'complete', 'links': [], **snapshot}
     if reason:
         with pytest.raises(GreenSearchDOMPending) as exc:
@@ -145,7 +145,7 @@ def test_capture_only_after_five_empty_snapshots(snapshot, reason):
 
 def test_diagnostic_navigation_exception_keeps_primary_failure():
     adapter = TypeSearchAdapter()
-    adapter.page = Mock(url='https://type.jp/job-1/')
+    adapter.page = Mock(url='https://type.jp/job/search/')
     calls = 0
     def evaluate(script):
         nonlocal calls
@@ -158,4 +158,15 @@ def test_diagnostic_navigation_exception_keeps_primary_failure():
     with pytest.raises(GreenSearchDOMPending) as exc:
         adapter.search_cards('IT・Webエンジニア', 1)
     assert exc.value.reason == 'NO_VALID_JOB_LINKS'
+    assert adapter.last_safe_source_diagnostic is None
+
+
+def test_category_landing_without_jobs_is_rejected():
+    adapter = TypeSearchAdapter()
+    adapter.page = Mock(url='https://type.jp/job-1/')
+    adapter.page.evaluate.return_value = {'ready': 'complete', 'links': []}
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        adapter.search_cards('IT・Webエンジニア', 1)
+    assert exc.value.reason == 'SOURCE_URL_MISMATCH'
+    adapter.page.evaluate.assert_not_called()
     assert adapter.last_safe_source_diagnostic is None

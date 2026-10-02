@@ -112,7 +112,7 @@ class TypeSearchAdapter:
     def source_url(self, label, page=1):
         if label not in SOURCES or type(page) is not int or page != 1:
             raise ValueError('Type 搜索来源或页码无效')
-        return ORIGIN + '/job-1/'
+        return ORIGIN + '/job/search/'
 
     def validate_job(self, job):
         checked = job_from_url(job.url, {})
@@ -129,7 +129,7 @@ class TypeSearchAdapter:
         if login_url(url, self.platform_key):
             self._stop('NEEDS_LOGIN', stage)
         if self._navigation_stage == Stage.SOURCE_NAVIGATION:
-            if url not in {ORIGIN + '/job-1/', ORIGIN + '/job/search/'}:
+            if url != ORIGIN + '/job/search/':
                 self._stop('SOURCE_URL_MISMATCH', stage)
         else:
             try:

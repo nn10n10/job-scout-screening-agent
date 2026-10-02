@@ -191,7 +191,10 @@ supervisor 已验收 Stage A 入口、exact detail、same-path canonical 与
 `/job/search/` path 和 page-number control，未证明 value/stride，所以仍禁用分页。
 
 `python -m scout_agent search type` 使用固定 source `IT・Webエンジニア`，
-导航 `https://type.jp/job-1/`，最终仅允许同域 exact `/job-1/` 或 `/job/search/`。
+直接导航已 live 验证的 `https://type.jp/job/search/` 第一页，最终仅接受该 exact URL，
+query、fragment、foreign origin 和其他路径均安全停止。
+`/job-1/` 已由 live diagnostic 确认为 category landing，零 exact detail links，
+不作为 production source。保留 Type source safe diagnostic，WebUI 仍忽略 diagnostic。
 身份只接受 exact `/job-<numeric>/<numeric>_detail/`，保存为
 `type:<category_id>:<job_id>`；query、fragment、foreign origin 和额外路径均拒绝。
 列表按组合身份去重，零 exact 链接安全停止，不推断空结果或分页结束。

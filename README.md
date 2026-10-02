@@ -12,7 +12,7 @@ adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，�
 
 LAPRAS 已接入 Search adapter、CLI Search 和 WebUI，读取 `/jobs/home` 第一页及 numeric 职位详情。列表尚无 numeric 链接时，仅在同页最多等待 4 次、每次 500ms 并重新读取；耗尽仍安全停止，不推定空结果。详情结构合法但缺标题或职责时，同页最多重读 4 次，每次等待 500ms，并校验导航与同职位 canonical；耗尽才输出脱敏诊断并安全停止。document.title 单独存在不代表详情就绪。WebUI 隐藏 LAPRAS 分页数字字段，固定扫描第一页；live 验收待 supervisor 确认。
 
-Type 已接入单页 Search：`python -m scout_agent search type`，source 为 `IT・Webエンジニア`。入口 `/job-1/` 允许落到同域 `/job/search/`，只采集 exact `/job-<category>/<job>_detail/` 职位并验证同路径 canonical。WebUI 显示 Type badge 和原始链接，隐藏分页字段；固定只扫描已验证的第一页，offset 分页尚未验证，不推进来源游标。沿用 Search recall-first 规则，真实 CLI / WebUI 验收仍待 supervisor。
+Type 已接入单页 Search：`python -m scout_agent search type`，source 为 `IT・Webエンジニア`。production source 为已 live 验证的 exact `/job/search/` 第一页；`/job-1/` 是已验证的 category landing，不作为 source。只采集 exact `/job-<category>/<job>_detail/` 职位并验证同路径 canonical。WebUI 显示 Type badge 和原始链接，隐藏分页字段；固定只扫描已验证的第一页，offset 分页步长尚未验证，不推进来源游标。沿用 Search recall-first 规则，真实 CLI / WebUI 验收仍待 supervisor。
 在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
 无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。

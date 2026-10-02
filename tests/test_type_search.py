@@ -11,7 +11,7 @@ from scout_agent.web.search_runs import validate_config, SearchRunManager
 from scout_agent.web.viewmodels import search_cards
 
 
-def adapter(snapshot, url='https://type.jp/job-1/'):
+def adapter(snapshot, url='https://type.jp/job/search/'):
     a = TypeSearchAdapter()
     a.page = Mock(url=url)
     a.page.evaluate.return_value = {'ready': 'complete', 'login': False, **snapshot}
@@ -420,15 +420,15 @@ def test_ancestor_skips_hidden_and_empty_siblings():
     assert fields['responsibilities'] == '架空第三层本文'
 
 
-@pytest.mark.parametrize('landing', ['https://type.jp/job-1/', 'https://type.jp/job/search/'])
+@pytest.mark.parametrize('landing', ['https://type.jp/job/search/'])
 def test_verified_source_landing_and_dedup(landing):
     a = adapter({'links': ['/job-1/900001_detail/', 'https://type.jp/job-1/900001_detail/',
         '/job-2/900001_detail/', '/job/search/', '/job-1/', '/job/opaque/']}, landing)
     assert [j.job_id for j in a.search_cards('IT・Webエンジニア', 1)] == ['type:1:900001', 'type:2:900001']
-    a.page.goto.assert_called_once_with('https://type.jp/job-1/', wait_until='load', timeout=15000)
+    a.page.goto.assert_called_once_with('https://type.jp/job/search/', wait_until='load', timeout=15000)
 
 
-@pytest.mark.parametrize('landing', ['https://type.jp/job/search/?offset=fictional',
+@pytest.mark.parametrize('landing', ['https://type.jp/job-1/', 'https://type.jp/job/search/?offset=fictional',
     'https://type.jp/job-2/', 'https://evil.test/job/search/', 'https://type.jp/job/search/#fragment'])
 def test_source_drift_rejected(landing):
     a = adapter({}, landing)
@@ -442,7 +442,7 @@ def test_single_page_and_namespace(tmp_path):
     from scout_agent.search import SearchStore, SearchEvaluation, run_search, POLICY_VERSION
     from scout_agent.storage.db import Database
     a = TypeSearchAdapter()
-    assert a.source_url('IT・Webエンジニア') == 'https://type.jp/job-1/'
+    assert a.source_url('IT・Webエンジニア', 1) == 'https://type.jp/job/search/'
     for page in [0, 2, True]:
         with pytest.raises(ValueError): a.source_url('IT・Webエンジニア', page)
     a.search_cards = Mock(side_effect=lambda *_: [job_from_url('/job-1/900001_detail/', {})])
