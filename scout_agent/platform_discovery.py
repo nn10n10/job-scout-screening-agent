@@ -132,12 +132,15 @@ def platform_summary(rows, platforms):
 
 def evidence(platform, url, snapshot):
     result = {'platform': platform, 'safe_failure_category': 'NONE'}
-    if platform == 'type' and not isinstance(snapshot, dict):
+    if platform in {'type', 'doda'} and not isinstance(snapshot, dict):
         raise ValueError('Invalid snapshot structure')
     if login_url(url, platform) or (allowed(url, platform) and snapshot.get('login')):
         return failure(platform, 'NEEDS_LOGIN')
     if not allowed(url, platform):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
+    if platform == 'doda':
+        validate_findy_snapshot(snapshot)
+        return doda_evidence(url, snapshot)
     if platform in {'findy', 'type'}:
         validate_findy_snapshot(snapshot)
     result['route_path'] = path_pattern(url, platform=platform)
@@ -183,6 +186,59 @@ def evidence(platform, url, snapshot):
             not candidates and result.get('page_kind') not in {'detail', 'search-entry'}):
         result['safe_failure_category'] = 'NO_JOB_LINK_EVIDENCE'
     return result
+
+
+DODA_LIST_PREFIX = '/DodaFront/View/JobSearchList/'
+DODA_LIST_PATTERN = DODA_LIST_PREFIX + ':criteria'
+DODA_DETAIL_PATTERN = '/DodaFront/View/JobSearchDetail/j_jid__:id/-tab__:tab/'
+DODA_PAGE_PATTERN = DODA_LIST_PATTERN + '/-page__:number/'
+
+
+def doda_detail(url):
+    """Internal captures only; identity values never leave discovery."""
+    return re.fullmatch(
+        r'/DodaFront/View/JobSearchDetail/j_jid__([0-9]+)/-tab__([A-Za-z0-9_-]+)/',
+        urlsplit(url).path)
+
+
+def doda_evidence(url, snapshot):
+    """Fixed Stage A route/link evidence, without production Search behavior."""
+    detail = doda_detail(url)
+    is_list = urlsplit(url).path.startswith(DODA_LIST_PREFIX)
+    tab = detail[2] if detail and detail[2] in {'pr', 'jd'} else 'other'
+    links = [link for link in snapshot.get('links', []) if allowed(link, 'doda')]
+    jobs = {(match[1], match[2]) for link in links if (match := doda_detail(link))}
+    canonical = snapshot.get('canonical')
+    canonical_detail = doda_detail(canonical) if allowed(canonical, 'doda') else None
+    same = bool(detail and canonical_detail and detail[1] == canonical_detail[1])
+    targets = [url, *links, *(item['url'] for item in snapshot.get('pagination', [])
+                              if allowed(item['url'], 'doda'))]
+    page_suffix = any(urlsplit(target).path.startswith(DODA_LIST_PREFIX)
+                      and re.search(r'/-page__[0-9]+/$', urlsplit(target).path)
+                      for target in targets)
+    loading = snapshot.get('ready') if snapshot.get('ready') in {
+        'loading', 'interactive', 'complete'} else 'unknown'
+    kind = ('detail-preview' if tab == 'pr' else 'detail-jd' if tab == 'jd' else 'other') if detail else 'list' if is_list else 'other'
+    category = ('LOADING' if snapshot.get('busy') is True or loading != 'complete'
+                else 'NO_JOB_LINK_EVIDENCE' if kind == 'other' else 'NONE')
+    return {
+        'platform': 'doda', 'safe_failure_category': category,
+        'route_path': DODA_DETAIL_PATTERN if detail else DODA_LIST_PATTERN if is_list else path_pattern(url),
+        'page_kind': kind, 'detail_tab': tab if detail else None,
+        'job_link_count': len(jobs),
+        'job_link_patterns': [DODA_DETAIL_PATTERN] if jobs else [],
+        'candidate_job_link_patterns': [DODA_DETAIL_PATTERN] if jobs else [],
+        'job_link_tabs': sorted({t if t in {'pr', 'jd'} else 'other' for _, t in jobs}),
+        'same_jid_pr_jd_present': any((jid, 'jd') in jobs for jid, t in jobs if t == 'pr'),
+        'stable_identity_candidate': 'jid' if same else None,
+        'canonical_url_pattern': DODA_DETAIL_PATTERN if same else None,
+        'page_suffix_present': page_suffix,
+        'pagination_candidates': ['page-number'] if page_suffix else [],
+        'pagination_link_patterns': [DODA_PAGE_PATTERN] if page_suffix else [],
+        'visible_section_headings_or_field_labels': sorted(set(snapshot.get('labels', [])) & LABELS),
+        'loading_state': loading, 'busy': snapshot.get('busy') is True,
+        'spa_marker_present': snapshot.get('spa') is True,
+    }
 
 
 # Fixed safe enumeration; adding a key does not implement pagination.
