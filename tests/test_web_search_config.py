@@ -454,3 +454,42 @@ console.log('doda platform and source survive reload; cross-platform sources rej
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
+
+
+def test_mynavi_config_survives_reload(tmp_path):
+    script = Path('scout_agent/web/static/search_config.js').read_text()
+    script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += r'''
+const assert = require('node:assert/strict');
+let stored;
+global.sessionStorage = {getItem: () => stored, setItem: (_, value) => stored = value};
+function form() {
+  const f = {elements: {platform: {value: 'green'}}, inputs: [],
+    numbers: Object.entries(limits).map(([name,[value]]) => ({name,value})),
+    querySelectorAll(s) {
+      if (s === '[type=number]') return this.numbers;
+      if (s === '[name=sources]') return this.inputs;
+      if (s === '[name=sources]:checked') return this.inputs.filter(i => i.checked);
+      throw Error(s);
+    }};
+  f.render = () => f.inputs = (f.elements.platform.value === 'mynavi' ? ['インフラエンジニア'] : ['AWS'])
+    .map(value => ({value, checked:true}));
+  f.render(); return f;
+}
+const first = form(); first.elements.platform.value = 'mynavi'; first.render();
+assert.equal(SearchConfig.save(first, limits), true);
+assert.equal(JSON.parse(stored).platform, 'mynavi');
+const second = form(); SearchConfig.restore(second, limits, second.render);
+assert.equal(second.elements.platform.value, 'mynavi');
+assert.deepEqual(second.inputs.map(i => i.value), ['インフラエンジニア']);
+assert.equal(SearchConfig.save(second, limits), true);
+const good = stored;
+stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+assert.equal(fallback.elements.platform.value, 'green');
+assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['インフラエンジニア'], limits), null);
+console.log('mynavi platform and source survive reload; cross-platform sources rejected');
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'cross-platform sources rejected' in result.stdout

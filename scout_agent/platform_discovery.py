@@ -7,6 +7,8 @@ import re
 import sys
 from urllib.parse import urlsplit, parse_qsl
 
+from scout_agent import mynavi_discovery
+
 from scout_agent.lapras_structure import STRUCTURE, sanitize
 from scout_agent.doda_structure import STRUCTURE as DODA_STRUCTURE, sanitize as sanitize_doda
 from scout_agent.findy_structure import STRUCTURE as FINDY_STRUCTURE, sanitize as sanitize_findy, exact_detail
@@ -78,6 +80,12 @@ DODA_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
     ")(); } catch (_) {} } return snapshot; }"
 
 
+MYNAVI_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
+    "if (!snapshot.login) snapshot.mynavi_detail_structure = Object.fromEntries(" + \
+    json.dumps(mynavi_discovery.SELECTORS) + \
+    ".map(s => [s, !!document.querySelector(s)])); return snapshot; }"
+
+
 def lapras_numeric_detail(platform, url):
     return (platform == 'lapras' and allowed(url, platform)
             and re.fullmatch(r'/jobs/[0-9]+/?', urlsplit(url).path) is not None)
@@ -137,12 +145,16 @@ def platform_summary(rows, platforms):
 
 def evidence(platform, url, snapshot):
     result = {'platform': platform, 'safe_failure_category': 'NONE'}
+    if platform == 'mynavi':
+        mynavi_discovery.validate(snapshot)
     if platform in {'type', 'doda'} and not isinstance(snapshot, dict):
         raise ValueError('Invalid snapshot structure')
     if login_url(url, platform) or (allowed(url, platform) and snapshot.get('login')):
         return failure(platform, 'NEEDS_LOGIN')
     if not allowed(url, platform):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
+    if platform == 'mynavi':
+        return mynavi_discovery.evidence(url, snapshot)
     if platform == 'doda':
         validate_findy_snapshot(snapshot)
         for field in ('login', 'busy', 'spa'):
@@ -452,7 +464,8 @@ def collect(browser, platforms):
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                script = (DODA_DETAIL_SNAPSHOT if platform == 'doda' and doda_diagnostic_route(before) else
+                script = (MYNAVI_SNAPSHOT if platform == 'mynavi' else
+                          DODA_DETAIL_SNAPSHOT if platform == 'doda' and doda_diagnostic_route(before) else
                           FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
                           LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else TYPE_SNAPSHOT if platform == 'type' else SNAPSHOT)
                 snapshot = page.evaluate(script)

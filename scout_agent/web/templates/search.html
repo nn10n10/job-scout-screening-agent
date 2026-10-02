@@ -5,7 +5,7 @@
 <header class="page-header"><p class="eyebrow">SEARCH · READ-ONLY</p><h1>Search 增量搜索</h1>
 <p>来源：search（主动搜索）。按钮启动本地只读扫描，需要已登录的 Chrome CDP。</p></header>
 <form id="search-form" class="search-controls">
-<label>搜索平台<select name="platform"><option value="green">Green</option><option value="forkwell">Forkwell</option><option value="lapras">LAPRAS</option><option value="findy">Findy</option><option value="type">Type</option><option value="doda">doda</option></select></label>
+<label>搜索平台<select name="platform"><option value="green">Green</option><option value="forkwell">Forkwell</option><option value="lapras">LAPRAS</option><option value="findy">Findy</option><option value="type">Type</option><option value="doda">doda</option><option value="mynavi">マイナビ転職</option></select></label>
 <fieldset class="search-sources"><legend>搜索来源</legend><div class="search-source-options">{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source }}</label>{% endfor %}</div></fieldset>
 {% for name,label,help in [('coverage_pages','每轮深页数','每轮每个来源额外扫描多少个深页'),('max_depth','最大扫描页','每个来源扫描的最大页码')] %}<label class="field search-basic">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}
 <button type="button" class="search-advanced-toggle" aria-expanded="false" aria-controls="search-advanced-panel">高级设置</button><div class="search-advanced-panel" id="search-advanced-panel" hidden>{% for name,label,help in [('max_jobs','详情读取上限','本次最多读取多少个职位详情'),('max_model_jobs','AI 评价上限','本次最多评价多少个职位'),('codex_batch_size','Codex 批次大小','仅影响本次搜索，不修改全局配置')] %}<label class="field">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}</div>
@@ -58,7 +58,7 @@
 const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');
 const configLimits = {{ limits|tojson }};
-const platformSources = {doda: ['インフラエンジニア'], green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
+const platformSources = {mynavi: ['インフラエンジニア'], doda: ['インフラエンジニア'], green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
 function renderSources() {
   const container = form.querySelector('.search-source-options');
   const singlePage = form.elements.platform.value === 'lapras' || form.elements.platform.value === 'type';
