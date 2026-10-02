@@ -61,6 +61,10 @@ SNAPSHOT = """() => {
 }""" % json.dumps(sorted(LABELS), ensure_ascii=False)
 
 
+# Read all visible Type anchors; other platforms retain their existing limits.
+TYPE_SNAPSHOT = SNAPSHOT.replace(".slice(0, 2000)", "")
+
+
 LAPRAS_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
     "if (!snapshot.login) snapshot.lapras_structure = (" + STRUCTURE + ")(); return snapshot; }"
 
@@ -128,11 +132,13 @@ def platform_summary(rows, platforms):
 
 def evidence(platform, url, snapshot):
     result = {'platform': platform, 'safe_failure_category': 'NONE'}
+    if platform == 'type' and not isinstance(snapshot, dict):
+        raise ValueError('Invalid snapshot structure')
     if login_url(url, platform) or (allowed(url, platform) and snapshot.get('login')):
         return failure(platform, 'NEEDS_LOGIN')
     if not allowed(url, platform):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
-    if platform == 'findy':
+    if platform in {'findy', 'type'}:
         validate_findy_snapshot(snapshot)
     result['route_path'] = path_pattern(url, platform=platform)
     links = [link for link in snapshot.get('links', []) if allowed(link, platform)]
@@ -156,6 +162,10 @@ def evidence(platform, url, snapshot):
         candidates = result['job_link_patterns']
         result['candidate_job_link_patterns'] = candidates
         result['stable_id_candidates'] = []
+    elif platform == 'type':
+        result.update(type_evidence(url, snapshot, links))
+        candidates = result['candidate_job_link_patterns']
+        result['stable_id_candidates'] = []
     elif platform == 'forkwell':
         result.update(forkwell_evidence(url, snapshot, links))
     elif platform == 'lapras':
@@ -170,9 +180,65 @@ def evidence(platform, url, snapshot):
     if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
     elif (platform == 'findy' and result['page_kind'] == 'other') or (
-            not candidates and result.get('page_kind') != 'detail'):
+            not candidates and result.get('page_kind') not in {'detail', 'search-entry'}):
         result['safe_failure_category'] = 'NO_JOB_LINK_EVIDENCE'
     return result
+
+
+# Fixed safe enumeration; adding a key does not implement pagination.
+TYPE_PAGINATION_KEYS = PAGINATION_KEYS | frozenset({'pageNo', 'pageNum', 'pageNumber'})
+TYPE_DETAIL_PATTERN = '/job-:id/:id_detail/'
+
+
+def type_detail(url):
+    return re.fullmatch(r'/job-[0-9]+/[0-9]+_detail/', urlsplit(url).path) is not None
+
+
+def type_pattern(url):
+    if type_detail(url):
+        return TYPE_DETAIL_PATTERN
+    if re.fullmatch(r'/job-[0-9]+/', urlsplit(url).path):
+        return '/job-:id/'
+    return path_pattern(url)
+
+
+def type_evidence(url, snapshot, links):
+    """Stage A structural evidence only; never a production identity selector."""
+    detail = type_detail(url)
+    path = urlsplit(url).path
+    job_paths = {urlsplit(link).path for link in links if type_detail(link)}
+    structural = [link for link in links if type_detail(link)
+                  or urlsplit(link).path.startswith(('/job/', '/jobs/'))
+                  or re.fullmatch(r'/job-[0-9]+/', urlsplit(link).path)]
+    canonical = snapshot.get('canonical')
+    same = (detail and allowed(canonical, 'type') and type_detail(canonical)
+            and urlsplit(canonical).path == path)
+    pagination = [(item['url'], item['kind']) for item in snapshot.get('pagination', [])
+                  if item['kind'] in {'next', 'prev', 'page-number', 'load-more'}
+                  and allowed(item['url'], 'type')]
+    kinds = {kind for _, kind in pagination}
+    if 'load-more' in snapshot.get('controls', []):
+        kinds.add('load-more')
+    return {
+        'route_path': type_pattern(url),
+        'page_kind': 'detail' if detail else 'search-entry' if path == '/job/search/'
+                     else 'list' if job_paths else 'other',
+        'job_link_count': len(job_paths),
+        'job_link_patterns': [TYPE_DETAIL_PATTERN] if job_paths else [],
+        'candidate_job_link_patterns': sorted({type_pattern(link) for link in structural
+                                              if urlsplit(link).path != '/job/search/'}),
+        'search_entry_link_patterns': ['/job/search/'] if any(
+            urlsplit(link).path == '/job/search/' for link in links) else [],
+        'category_id_path_segment': 1 if detail else None,
+        'job_id_path_segment': 2 if detail else None,
+        'stable_identity_candidate': 'category_plus_job_id' if same else None,
+        'canonical_url_pattern': TYPE_DETAIL_PATTERN if same else None,
+        'pagination_query_keys': sorted({key for target in [url, *links, *(t for t, _ in pagination)]
+                                         for key, _ in parse_qsl(urlsplit(target).query)
+                                         if key in TYPE_PAGINATION_KEYS}),
+        'pagination_link_patterns': sorted({type_pattern(target) for target, _ in pagination}),
+        'pagination_candidates': sorted(kinds),
+    }
 
 
 def findy_detail(url):
@@ -312,7 +378,7 @@ def collect(browser, platforms):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
                 script = (FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
-                          LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT)
+                          LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else TYPE_SNAPSHOT if platform == 'type' else SNAPSHOT)
                 snapshot = page.evaluate(script)
                 if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
                     output.append(failure(platform, 'NEEDS_LOGIN'))

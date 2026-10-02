@@ -169,3 +169,17 @@ CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent
 
 CLI live / WebUI live 未运行；候选池真实 badge/link 验收仍待授权环境。
 等待 supervisor final APPROVED，由 bridge 处理同一 PR #18；本任务不提交、push 或 merge。
+
+### type.jp：Stage A.1 只读 discovery
+
+`python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform type`
+仅 evaluate 用户已打开的 type 标签页，不导航、刷新或点击；尚未实现正式 Search adapter。
+exact `/job/search/` 为搜索入口，不能计入职位链接。exact detail shape
+`/job-:id/:id_detail/` 仅输出脱敏位置证据；只有当前 URL 和同域 canonical
+指向同一 exact detail path，才输出 `category_plus_job_id` 候选枚举，仍不代表
+已验收的生产 identity。职位链接按 path 去重，query/fragment 不计为新职位。
+`/job/:segment/` 与 `/job-:id/` 仅为结构候选；含 detail links 的页面标为
+`list` 也不意味着 source route 已经通过 live 验收。
+分页仅输出固定 key、path pattern 和 control kind；允许 `page/p/cursor/offset`
+及固定枚举 `pageNo/pageNum/pageNumber`，不输出参数值，不实现自动分页。
+字段标题仅输出既有 allowlist。等待 supervisor 获取并验收 live 结构证据后再决定下一阶段。

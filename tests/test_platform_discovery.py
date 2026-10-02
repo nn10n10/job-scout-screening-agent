@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from scout_agent.platform_discovery import (
-    PLATFORMS, SNAPSHOT, allowed, collect, evidence, local_endpoint, main,
+    PLATFORMS, SNAPSHOT, TYPE_SNAPSHOT, allowed, collect, evidence, local_endpoint, main,
 )
 
 
@@ -53,8 +53,8 @@ def test_collect_reads_only_allowed_existing_tabs():
     browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[good, bad])])
     rows = collect(browser, ['type', 'findy'])
     assert rows[1]['safe_failure_category'] == 'NO_OPEN_TAB'
-    good.evaluate.assert_called_once_with(SNAPSHOT)
-    assert good.method_calls == [('evaluate', (SNAPSHOT,), {})]
+    good.evaluate.assert_called_once_with(TYPE_SNAPSHOT)
+    assert good.method_calls == [('evaluate', (TYPE_SNAPSHOT,), {})]
     assert bad.method_calls == []
 
 
@@ -147,7 +147,7 @@ def test_redirect_during_read_stops_and_continues_other_platforms(raises):
     rows = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[expired, good])]), ['findy', 'type'])
     assert [r['safe_failure_category'] for r in rows] == ['NEEDS_LOGIN', 'NONE']
     assert expired.calls == 1
-    assert good.method_calls == [('evaluate', (SNAPSHOT,), {})]
+    assert good.method_calls == [('evaluate', (TYPE_SNAPSHOT,), {})]
     assert 'fictional-secret' not in json.dumps(rows)
 
 
