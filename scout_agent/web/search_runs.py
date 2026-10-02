@@ -17,7 +17,8 @@ from scout_agent.forkwell_discovery import SOURCES as FORKWELL_SOURCES
 from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
 from scout_agent.type_search import SOURCES as TYPE_SOURCES
 from scout_agent.findy_search import SOURCES as FINDY_SOURCES
-SEARCH_SOURCES = {'green': KEYWORDS, 'forkwell': FORKWELL_SOURCES, 'lapras': LAPRAS_SOURCES, 'findy': FINDY_SOURCES, 'type': TYPE_SOURCES}
+from scout_agent.doda_search import SOURCES as DODA_SOURCES
+SEARCH_SOURCES = {'green': KEYWORDS, 'forkwell': FORKWELL_SOURCES, 'lapras': LAPRAS_SOURCES, 'findy': FINDY_SOURCES, 'type': TYPE_SOURCES, 'doda': DODA_SOURCES}
 
 LIMITS = {'coverage_pages': (2, 1, 15), 'max_depth': (15, 2, 100),
           'max_jobs': (30, 1, 500), 'max_model_jobs': (20, 1, 200),
@@ -102,7 +103,7 @@ class SearchRunManager:
         return True
 
     def _emit(self, line):
-        if line.startswith(('Findy safe detail diagnostic: ', 'Type safe source diagnostic: ', 'Type safe detail diagnostic: ')):
+        if line.startswith(('Doda safe source diagnostic: ', 'Doda safe detail diagnostic: ', 'Findy safe detail diagnostic: ', 'Type safe source diagnostic: ', 'Type safe detail diagnostic: ')):
             return
         safe = None
         with self.lock:
@@ -115,12 +116,14 @@ class SearchRunManager:
                 self.state['error'] = 'NEEDS_LOGIN'
                 return
             context = re.fullmatch(
-                r'(?:Green|Forkwell|LAPRAS|Findy|Type) safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
+                r'(?:Green|Forkwell|LAPRAS|Findy|Type|Doda) safety stop: source=(.+) page=([0-9]{1,3}) category=([A-Z_]+)', line)
+            if context and line.startswith('Doda safety stop: ') and context[1] not in (*DODA_SOURCES, 'NONE'):
+                return
             if context and line.startswith('Type safety stop: ') and context[1] not in (*TYPE_SOURCES, 'NONE'):
                 return
-            if context and context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, 'NONE') and context[3] in SAFE_REASONS:
+            if context and context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, *DODA_SOURCES, 'NONE') and context[3] in SAFE_REASONS:
                 page = int(context[2])
-                if (context[1] == 'NONE' and page == 0) or (context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES) and page > 0):
+                if (context[1] == 'NONE' and page == 0) or (context[1] in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, *DODA_SOURCES) and page > 0):
                     self.state.update(error='green_safety_stop',
                                       failed_source=None if context[1] == 'NONE' else context[1],
                                       failed_page=page or None, safe_reason=context[3])
@@ -135,7 +138,7 @@ class SearchRunManager:
                 if match and match[1] in COUNTS:
                     self.state['stats'][match[1]] = int(match[2])
                     safe = line
-                for source in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES):
+                for source in (*KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES, *DODA_SOURCES):
                     if re.fullmatch(r'Search progress: ' + re.escape(source) + r' page [0-9]{1,3}', line):
                         safe = line
                     pages = re.fullmatch(re.escape(source) + r' pages: ([0-9]{1,3}(?:,[0-9]{1,3}){0,100})', line)

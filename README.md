@@ -409,3 +409,6 @@ Findy active Search 使用已验证的推荐列表与分页：`python -m scout_a
 Findy Stage B.1 仅补充只读 detail structure diagnostic，正式职责 parser 暂未修改。缺失 title / responsibilities 时，CLI 向 stderr 输出一条 `Findy safe detail diagnostic: <sanitized JSON>`；WebUI 忽略该行，不保存到 summary/state。输出仅含固定 labels、tag/role、最多三层 ancestor、固定关系枚举与 `仕事内容` 后续节点的脱敏 shape，不含正文或职位身份。诊断失败保留原有安全停止原因。
 
 手动 probe 可使用 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform findy`：只 evaluate 已打开标签页，仅 exact `/companies/<numeric>/jobs/<opaque>` 附加同一脱敏结构，不导航或自动登录。等待 supervisor review 后，由用户在授权环境运行同一小预算 CLI 获取 live diagnostic；桥不做 live。
+
+
+doda 主动 Search：`python -m scout_agent search doda --keyword インフラエンジニア`。首版仅使用已验证的广义职种来源与 `-page__N/` 分页，WebUI 默认勾选该来源并显示分页设置、doda badge 和经身份校验的外部链接。候选身份 `doda:<jid>`、游标 `doda:インフラエンジニア` 与 Scout/其它平台隔离，沿用 recall-first、缓存及人工状态，POLICY_VERSION 不变。详情仅从 NEXT_DATA 结构化字段提取，route/canonical/jid 不一致或缺少标题、职责时安全停止；不复用 Scout 严筛。本次仅虚构数据验证，真实 CLI、缓存复跑和 WebUI 验收待 supervisor。

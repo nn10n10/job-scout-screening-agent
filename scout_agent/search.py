@@ -447,9 +447,10 @@ def search_command(args, settings, *, adapter=None):
 
     def progress(label, page):
         nonlocal source, number
-        if getattr(args, 'platform', 'green') == 'type':
+        if getattr(args, 'platform', 'green') in {'type', 'doda'}:
             from scout_agent.type_search import SOURCES as TYPE_SOURCES
-            if label not in TYPE_SOURCES:
+            from scout_agent.doda_search import SOURCES as DODA_SOURCES
+            if label not in (DODA_SOURCES if args.platform == 'doda' else TYPE_SOURCES):
                 source, number = 'NONE', 0
                 return
         source, number = label, page
@@ -458,11 +459,12 @@ def search_command(args, settings, *, adapter=None):
     try:
         if adapter is None:
             from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+            from scout_agent.doda_search import DodaSearchAdapter
             from scout_agent.type_search import TypeSearchAdapter
             from scout_agent.findy_search import FindySearchAdapter
             from scout_agent.lapras_search import LaprasSearchAdapter
             adapter = {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter}[getattr(args, 'platform', 'green')]()
+                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter}[getattr(args, 'platform', 'green')]()
         return _search_command(args, settings, adapter=adapter, progress=progress)
     except (GreenSearchDOMPending, ValueError, Error) as exc:
         if (isinstance(exc, GreenSearchDOMPending)
@@ -508,11 +510,12 @@ def search_command(args, settings, *, adapter=None):
         from scout_agent.type_search import SOURCES as TYPE_SOURCES
         from scout_agent.findy_search import SOURCES as FINDY_SOURCES
         from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
-        allowed_sources = TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
+        from scout_agent.doda_search import SOURCES as DODA_SOURCES
+        allowed_sources = DODA_SOURCES if getattr(args, 'platform', 'green') == 'doda' else TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
             *KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES)
         if source not in allowed_sources:
             source, number = 'NONE', 0
-        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type'}.get(getattr(args, 'platform', 'green'), 'Green')
+        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type', 'doda': 'Doda'}.get(getattr(args, 'platform', 'green'), 'Green')
         print(f'{platform_label} safety stop: source={source} page={number} category={reason}',
               file=sys.stderr, flush=True)
         return 1
@@ -522,11 +525,12 @@ def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.browser.manager import BrowserManager
     from scout_agent.storage.db import Database
     from scout_agent.forkwell_discovery import ForkwellSearchAdapter
+    from scout_agent.doda_search import DodaSearchAdapter
     from scout_agent.type_search import TypeSearchAdapter
     from scout_agent.findy_search import FindySearchAdapter
     from scout_agent.lapras_search import LaprasSearchAdapter
     adapter = adapter or {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter}[getattr(args, 'platform', 'green')]()
+                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter}[getattr(args, 'platform', 'green')]()
     adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
     sources = args.keyword or getattr(adapter, 'source_labels', KEYWORDS)
