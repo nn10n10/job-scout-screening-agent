@@ -246,6 +246,12 @@ class TypeSearchAdapter:
             fields = parse_fields(data['sections'], data['title'])
             if fields.get('title') and fields.get('responsibilities'):
                 return fields
+        # Diagnostic failures must never replace the primary missing-field failure.
+        try:
+            from scout_agent.type_detail_structure import STRUCTURE, sanitize
+            self.last_safe_detail_diagnostic = sanitize(self._read(STRUCTURE, Stage.DETAIL_NAVIGATION))
+        except Exception:
+            pass
         if not fields.get('title'):
             self._stop('TITLE_MISSING', Stage.DETAIL_TITLE)
         if not fields.get('responsibilities'):
