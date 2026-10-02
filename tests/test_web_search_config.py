@@ -316,3 +316,42 @@ console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'Green/Forkwell restored' in result.stdout
+
+
+def test_findy_config_survives_reload(tmp_path):
+    script = Path('scout_agent/web/static/search_config.js').read_text()
+    script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += r'''
+const assert = require('node:assert/strict');
+let stored;
+global.sessionStorage = {getItem: () => stored, setItem: (_, value) => stored = value};
+function form() {
+  const f = {elements: {platform: {value: 'green'}}, inputs: [],
+    numbers: Object.entries(limits).map(([name,[value]]) => ({name,value})),
+    querySelectorAll(s) {
+      if (s === '[type=number]') return this.numbers;
+      if (s === '[name=sources]') return this.inputs;
+      if (s === '[name=sources]:checked') return this.inputs.filter(i => i.checked);
+      throw Error(s);
+    }};
+  f.render = () => f.inputs = (f.elements.platform.value === 'findy' ? ['おすすめ求人'] : ['AWS'])
+    .map(value => ({value, checked:true}));
+  f.render(); return f;
+}
+const first = form(); first.elements.platform.value = 'findy'; first.render();
+assert.equal(SearchConfig.save(first, limits), true);
+assert.equal(JSON.parse(stored).platform, 'findy');
+const second = form(); SearchConfig.restore(second, limits, second.render);
+assert.equal(second.elements.platform.value, 'findy');
+assert.deepEqual(second.inputs.map(i => i.value), ['おすすめ求人']);
+assert.equal(SearchConfig.save(second, limits), true);
+const good = stored;
+stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+assert.equal(fallback.elements.platform.value, 'green');
+assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['おすすめ求人'], limits), null);
+console.log('Findy platform and source survive reload; cross-platform sources rejected');
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'cross-platform sources rejected' in result.stdout

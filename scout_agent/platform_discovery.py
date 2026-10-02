@@ -8,6 +8,7 @@ import sys
 from urllib.parse import urlsplit, parse_qsl
 
 from scout_agent.lapras_structure import STRUCTURE, sanitize
+from scout_agent.findy_structure import STRUCTURE as FINDY_STRUCTURE, sanitize as sanitize_findy, exact_detail
 
 PLATFORMS = {
     'forkwell': frozenset({'jobs.forkwell.com', 'forkwell.com'}),
@@ -64,6 +65,10 @@ LAPRAS_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
     "if (!snapshot.login) snapshot.lapras_structure = (" + STRUCTURE + ")(); return snapshot; }"
 
 
+FINDY_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
+    "if (!snapshot.login) snapshot.findy_structure = (" + FINDY_STRUCTURE + ")(); return snapshot; }"
+
+
 def lapras_numeric_detail(platform, url):
     return (platform == 'lapras' and allowed(url, platform)
             and re.fullmatch(r'/jobs/[0-9]+/?', urlsplit(url).path) is not None)
@@ -78,11 +83,11 @@ def allowed(url, platform):
         return False
 
 
-def path_pattern(url):
+def path_pattern(url, *, platform=None):
     """Never retain arbitrary literal path segments, query values or fragments."""
     p = urlsplit(url)
     parts = p.path.split('/')
-    return '/'.join(s if s in SEGMENTS else ':id' if re.fullmatch(r'\d+', s)
+    return '/'.join(s if s in SEGMENTS or (platform == 'findy' and s == 'recommends') else ':id' if re.fullmatch(r'\d+', s)
                     else ':segment' if s else '' for s in parts)
 
 
@@ -127,7 +132,9 @@ def evidence(platform, url, snapshot):
         return failure(platform, 'NEEDS_LOGIN')
     if not allowed(url, platform):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
-    result['route_path'] = path_pattern(url)
+    if platform == 'findy':
+        validate_findy_snapshot(snapshot)
+    result['route_path'] = path_pattern(url, platform=platform)
     links = [link for link in snapshot.get('links', []) if allowed(link, platform)]
     candidates = sorted({path_pattern(link) for link in links
                          if any(s in {'job', 'jobs', 'detail'} for s in urlsplit(link).path.split('/'))})
@@ -142,7 +149,14 @@ def evidence(platform, url, snapshot):
         busy=snapshot.get('busy') is True,
         spa_marker_present=snapshot.get('spa') is True,
     )
-    if platform == 'forkwell':
+    if platform == 'findy':
+        result.update(findy_evidence(url, snapshot, links))
+        if exact_detail(url) and 'findy_structure' in snapshot:
+            result['findy_structure'] = sanitize_findy(snapshot['findy_structure'])
+        candidates = result['job_link_patterns']
+        result['candidate_job_link_patterns'] = candidates
+        result['stable_id_candidates'] = []
+    elif platform == 'forkwell':
         result.update(forkwell_evidence(url, snapshot, links))
     elif platform == 'lapras':
         result.update(forkwell_evidence(url, snapshot, links, platform='lapras'))
@@ -155,9 +169,66 @@ def evidence(platform, url, snapshot):
             result['lapras_structure'] = sanitize(snapshot['lapras_structure'])
     if result['busy'] or result['loading_state'] != 'complete':
         result['safe_failure_category'] = 'LOADING'
-    elif not candidates and result.get('page_kind') != 'detail':
+    elif (platform == 'findy' and result['page_kind'] == 'other') or (
+            not candidates and result.get('page_kind') != 'detail'):
         result['safe_failure_category'] = 'NO_JOB_LINK_EVIDENCE'
     return result
+
+
+def findy_detail(url):
+    """Exact observed shape; neither the company ID nor opaque key is emitted."""
+    return re.fullmatch(r'/companies/[0-9]+/jobs/[A-Za-z0-9_-]+', urlsplit(url).path) is not None
+
+
+def validate_findy_snapshot(snapshot):
+    """Reject malformed structures before producing any discovery evidence."""
+    for field in ('links', 'labels', 'controls'):
+        values = snapshot.get(field, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) for v in values):
+            raise ValueError('Invalid snapshot structure')
+    pagination = snapshot.get('pagination', [])
+    if not isinstance(pagination, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get('url'), str)
+        or not isinstance(item.get('kind'), str) for item in pagination
+    ):
+        raise ValueError('Invalid pagination structure')
+    if snapshot.get('canonical') is not None and not isinstance(snapshot['canonical'], str):
+        raise ValueError('Invalid canonical structure')
+
+
+def findy_evidence(url, snapshot, links):
+    """Findy discovery only: fixed structural enums, no persisted job identity."""
+    detail = findy_detail(url)
+    job_links = [link for link in links if findy_detail(link)]
+    # Reuse fixed-key evidence without adopting generic route or ID guesses.
+    canonical = snapshot.get('canonical')
+    same_canonical = (detail and allowed(canonical, 'findy')
+                      and urlsplit(canonical).path == urlsplit(url).path)
+    pagination_links = [item['url'] for item in snapshot.get('pagination', [])
+                        if item['kind'] in {'next', 'prev', 'page-number', 'load-more'}
+                        and allowed(item['url'], 'findy')]
+    kinds = {item['kind'] for item in snapshot.get('pagination', [])
+             if item['kind'] in {'next', 'prev', 'page-number', 'load-more'}
+             and allowed(item['url'], 'findy')}
+    if 'load-more' in snapshot.get('controls', []):
+        kinds.add('load-more')
+    return {
+        'route_path': '/companies/:id/jobs/:segment' if detail else path_pattern(url, platform='findy'),
+        'page_kind': 'detail' if detail else 'list' if urlsplit(url).path == '/recommends' else 'other',
+        'job_link_count': len(job_links),
+        'job_link_patterns': ['/companies/:id/jobs/:segment'] if job_links else [],
+        'company_id_path_segment': 2 if detail or job_links else None,
+        'job_key_path_segment': 4 if detail else None,
+        'job_key_kind': 'opaque_segment' if detail else None,
+        'stable_identity_candidate': 'company_id_plus_job_key' if same_canonical else None,
+        'canonical_url_pattern': '/companies/:id/jobs/:segment' if same_canonical else None,
+        'pagination_query_keys': sorted({key for target in [url, *links, *pagination_links]
+                                         for key, _ in parse_qsl(urlsplit(target).query)
+                                         if key in PAGINATION_KEYS}),
+        'pagination_link_patterns': sorted({path_pattern(link, platform='findy')
+                                            for link in pagination_links}),
+        'pagination_candidates': sorted(kinds),
+    }
 
 
 def forkwell_id_segment(url):
@@ -240,7 +311,8 @@ def collect(browser, platforms):
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                script = LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT
+                script = (FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
+                          LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else SNAPSHOT)
                 snapshot = page.evaluate(script)
                 if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
                     output.append(failure(platform, 'NEEDS_LOGIN'))

@@ -121,3 +121,51 @@ CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent
 退出码 0：`44 passed, 1 warning in 2.41s`。warning 均为既有
 `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
 Green/Forkwell 分页、缓存、历史状态回归包含在全量验证中。
+
+### Findy Stage B（离线实现）
+
+根据 supervisor 提供的 Stage A.1 证据，独立 adapter 使用
+`https://findy-code.io/recommends` 与 `?page=N`，固定 source 为
+`おすすめ求人`。严格 detail path 为
+`/companies/<numeric>/jobs/<opaque>`（opaque 仅 ASCII 字母、数字、下划线、连字符）；
+拒绝 query、fragment、编码斜杠、额外路径与 foreign origin。
+组合身份 `findy:<company_id>:<job_key>`、来源游标 `findy:おすすめ求人`
+沿用现有缓存与人工状态机制，POLICY_VERSION 不变。
+列表和详情仅 goto/evaluate/wait；首次读取后最多同页重试 4×500ms，
+异常结构、登录与身份漂移立即 fail-closed。
+详情只读取 visible h1 和固定 heading/carrier 的后续局部 sibling 内容，
+在固定字段或 heading/section 边界停止，不读 full body，不用 site CSS selector。
+
+新增 `tests/test_findy_search.py` 与 SearchConfig Findy restore 回归；
+覆盖组合身份、strict URL、source page drift、重试、安全 canonical、
+语义边界、cache/cursor namespace、CLI/WebUI、badge/external URL 与固定遥测。
+测试数据全部虚构，模型 mocked；真实浏览器/数据库/招聘网站/付费模型访问 none。
+当前工具环境无 subagent，主 Agent 自行验证。
+
+全量使用仓库已有的测试进程 bounded_select workaround，精确命令：
+
+```bash
+TMPDIR="$PWD/.test-tmp" /home/zmang/scoutfilter/scout-agent/.venv/bin/python - <<'PY'
+import selectors
+import pytest
+original = selectors.EpollSelector.select
+def bounded_select(self, timeout=None):
+    return original(self, 0.05 if timeout is None else min(timeout, 0.05))
+selectors.EpollSelector.select = bounded_select
+raise SystemExit(pytest.main(['-q', '--basetemp=.test-tmp/full']))
+PY
+```
+
+退出码 0：`1006 passed, 1 warning in 39.86s`；
+failed/skipped/xfailed none。唯一 warning 是既有
+`StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead.`
+普通 pytest 在 sandbox TestClient 跨线程等待处未完成，无最终摘要；
+上述结果不代表普通 pytest 在此 sandbox 中通过，不更改生产事件循环。
+
+CLI smoke：`/home/zmang/scoutfilter/scout-agent/.venv/bin/python -m scout_agent search findy --help`，
+退出码 0；stdout 含 `{green,forkwell,lapras,findy}`、source `おすすめ求人`、
+`--coverage-pages` 与 `--max-depth`，没有启动真实 Search。
+`git diff --check` 与 `git diff --cached --check` 均退出码 0，无输出。
+
+CLI live / WebUI live 未运行；候选池真实 badge/link 验收仍待授权环境。
+等待 supervisor final APPROVED，由 bridge 处理同一 PR #18；本任务不提交、push 或 merge。
