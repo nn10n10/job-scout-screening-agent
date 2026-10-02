@@ -8,6 +8,7 @@ import sys
 from urllib.parse import urlsplit, parse_qsl
 
 from scout_agent.lapras_structure import STRUCTURE, sanitize
+from scout_agent.doda_structure import STRUCTURE as DODA_STRUCTURE, sanitize as sanitize_doda
 from scout_agent.findy_structure import STRUCTURE as FINDY_STRUCTURE, sanitize as sanitize_findy, exact_detail
 
 PLATFORMS = {
@@ -71,6 +72,10 @@ LAPRAS_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
 
 FINDY_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
     "if (!snapshot.login) snapshot.findy_structure = (" + FINDY_STRUCTURE + ")(); return snapshot; }"
+
+DODA_DETAIL_SNAPSHOT = "() => { const snapshot = (" + SNAPSHOT + ")(); " + \
+    "if (!snapshot.login) { try { snapshot.doda_detail_structure = (" + DODA_STRUCTURE + \
+    ")(); } catch (_) {} } return snapshot; }"
 
 
 def lapras_numeric_detail(platform, url):
@@ -204,6 +209,12 @@ def doda_detail(url):
         urlsplit(url).path)
 
 
+def doda_diagnostic_route(url):
+    return (allowed(url, 'doda')
+            and urlsplit(url).path.startswith('/DodaFront/View/JobSearchDetail/')
+            and not doda_detail(url))
+
+
 def doda_evidence(url, snapshot):
     """Fixed Stage A route/link evidence, without production Search behavior."""
     detail = doda_detail(url)
@@ -226,7 +237,7 @@ def doda_evidence(url, snapshot):
                 else 'NO_JOB_LINK_EVIDENCE' if kind == 'other' else 'NONE')
     # An incomplete or unrecognized page cannot establish a stable identity.
     same = same and category == 'NONE'
-    return {
+    result = {
         'platform': 'doda', 'safe_failure_category': category,
         'route_path': DODA_DETAIL_PATTERN if detail else DODA_LIST_PATTERN if is_list else '/:unrecognized',
         'page_kind': kind, 'detail_tab': tab if detail else None,
@@ -244,6 +255,9 @@ def doda_evidence(url, snapshot):
         'loading_state': loading, 'busy': snapshot.get('busy') is True,
         'spa_marker_present': snapshot.get('spa') is True,
     }
+    if doda_diagnostic_route(url):
+        result['doda_detail_structure'] = sanitize_doda(snapshot.get('doda_detail_structure'))
+    return result
 
 
 # Fixed safe enumeration; adding a key does not implement pagination.
@@ -438,7 +452,8 @@ def collect(browser, platforms):
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                script = (FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
+                script = (DODA_DETAIL_SNAPSHOT if platform == 'doda' and doda_diagnostic_route(before) else
+                          FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
                           LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else TYPE_SNAPSHOT if platform == 'type' else SNAPSHOT)
                 snapshot = page.evaluate(script)
                 if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):

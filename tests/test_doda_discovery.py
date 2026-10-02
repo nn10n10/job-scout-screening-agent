@@ -134,3 +134,121 @@ def test_unknown_route_has_only_fixed_pattern():
     assert result['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
     for private in ['987654321', 'FictionalCompany', 'private', 'criteria']:
         assert private not in json.dumps(result)
+
+
+def diagnostic(url=None, canonical=None, payload=None, has_node=True):
+    """Execute the real capture against a fictional DOM, without a browser."""
+    import subprocess
+    from scout_agent.doda_structure import STRUCTURE
+    url = url or detail(tab='jd') + '-fakekey__fakevalue/'
+    script = '''
+const fixture = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+global.location = new URL(fixture.url);
+global.document = {querySelector: selector => selector === 'link[rel="canonical"]' ?
+  (fixture.canonical ? {href: fixture.canonical} : null) :
+  (fixture.has_node ? {textContent: fixture.payload} : null)};
+process.stdout.write(JSON.stringify((''' + STRUCTURE + ''')()));
+'''
+    result = subprocess.run(['node', '-e', script], input=json.dumps(dict(
+        url=url, canonical=canonical, payload=payload, has_node=has_node)),
+        capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize('canonical,same,kind', [
+    (detail(tab='jd'), True, 'exact-detail'),
+    (detail('123456789'), False, 'exact-detail'),
+    (detail() + 'extra/', True, 'extended-detail'),
+    (LIST, False, 'list'), (None, False, 'none'),
+    (detail().replace(BASE, 'https://foreign.test'), False, 'other'),
+])
+def test_extended_detail_structure(canonical, same, kind):
+    capture = diagnostic(canonical=canonical)
+    result = row(detail(tab='jd') + '-fakekey__fakevalue/', doda_detail_structure=capture)
+    structure = result['doda_detail_structure']
+    assert structure['nonempty_segment_count_capped'] == 6
+    assert structure['jid_segment_present'] is True
+    assert structure['tab_segment_kind'] == 'jd'
+    assert structure['trailing_segment_count_capped'] == 1
+    assert structure['trailing_segment_shapes'] == ['hyphen-key-doubleunderscore-value']
+    assert structure['canonical_kind'] == kind
+    assert structure['canonical_same_jid_as_route_prefix'] is same
+    assert result['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
+    assert result['stable_identity_candidate'] is None
+    for secret in ['fakekey', 'fakevalue', '987654321', '123456789', 'https://']:
+        assert secret not in json.dumps(result)
+
+
+@pytest.mark.parametrize('jid,present,match', [
+    ('987654321', True, True), (987654321, True, True),
+    ('123456789', True, False), ('private-jid', False, False), (None, False, False),
+])
+def test_next_data_presence_only(jid, present, match):
+    from scout_agent.doda_structure import RECRUIT_KEYS
+    payload = json.dumps({'props': {'pageProps': {'job': {'job': {
+        'jid': jid, 'recruit': {'salary': 'private salary text',
+                              'jobContentDetail': 'private JD', 'privatekey': 'privatevalue'},
+        'company': 'Fictional Company',
+    }}}}})
+    result = row(detail() + 'extra/', doda_detail_structure=diagnostic(payload=payload))
+    structure = result['doda_detail_structure']
+    assert structure['has_next_data'] is True
+    assert structure['next_data_jid_present'] is present
+    assert structure['next_data_jid_matches_route_prefix'] is match
+    assert structure['has_recruit_object'] is True
+    assert structure['recruit_key_presence'] == {
+        key: key in {'salary', 'jobContentDetail'} for key in RECRUIT_KEYS}
+    assert 'private' not in json.dumps(result)
+    assert 'Fictional' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('payload', ['private malformed JSON', 'null', '[]',
+    '{"props":{"pageProps":{"job":{"job":{"recruit":[]}}}}}'])
+def test_malformed_next_data_preserves_primary_failure(payload):
+    capture = diagnostic(payload=payload)
+    page = Mock(url=detail() + 'extra/')
+    page.evaluate.return_value = {'ready': 'complete', 'doda_detail_structure': capture}
+    result = collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['doda'])[0]
+    assert result['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
+    assert result['doda_detail_structure']['next_data_jid_present'] is False
+    assert result['doda_detail_structure']['has_recruit_object'] is False
+    assert 'private' not in json.dumps(result)
+    from scout_agent.platform_discovery import DODA_DETAIL_SNAPSHOT
+    page.evaluate.assert_called_once_with(DODA_DETAIL_SNAPSHOT)
+
+
+@pytest.mark.parametrize('url', [detail(), detail(tab='jd'), LIST, BASE + '/other/',
+    detail().replace(BASE, 'https://foreign.test') + 'extra/'])
+def test_diagnostic_not_added_elsewhere(url):
+    assert 'doda_detail_structure' not in row(url, doda_detail_structure={'private': 'secret'})
+    assert diagnostic(url=url) == {}
+
+
+def test_sanitizer_rebuild_and_capture_failure():
+    from scout_agent.doda_structure import sanitize, RECRUIT_KEYS
+    result = sanitize({'private': 'secret', 'jid_segment_present': 'true',
+        'nonempty_segment_count_capped': 999, 'trailing_segment_count_capped': -9,
+        'tab_segment_kind': [], 'canonical_kind': 'private',
+        'trailing_segment_shapes': ['plain', 'secret', {}, 'numeric'],
+        'recruit_key_presence': {'salary': 'secret', 'private': True}})
+    assert result['nonempty_segment_count_capped'] == 20
+    assert result['trailing_segment_count_capped'] == 0
+    assert result['jid_segment_present'] is False
+    assert result['trailing_segment_shapes'] == ['numeric', 'plain']
+    assert set(result['recruit_key_presence']) == set(RECRUIT_KEYS)
+    assert 'secret' not in json.dumps(result)
+    assert row(detail() + 'extra/')['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
+    assert diagnostic(has_node=False)['has_next_data'] is False
+
+
+def test_structure_shapes_caps_and_missing_segments():
+    structure = diagnostic(url=detail(tab='unknown') +
+        '123/plain/a%20b/' + '/'.join(['-fake__secret'] * 30))
+    assert structure['nonempty_segment_count_capped'] == 20
+    assert structure['trailing_segment_count_capped'] == 10
+    assert set(structure['trailing_segment_shapes']) == {
+        'numeric', 'plain', 'other', 'hyphen-key-doubleunderscore-value'}
+    assert structure['tab_segment_kind'] == 'other'
+    empty = diagnostic(url=BASE + '/DodaFront/View/JobSearchDetail/')
+    assert empty['jid_segment_present'] is False
+    assert empty['tab_segment_kind'] == 'none'
