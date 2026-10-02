@@ -89,14 +89,48 @@ def test_route_drift(path):
 @pytest.mark.parametrize('snapshot,category', [({'login': True}, 'NEEDS_LOGIN'),
     ({'ready': 'loading'}, 'LOADING'), ({'busy': True}, 'LOADING')])
 def test_login_loading(snapshot, category):
-    assert row(detail(), **snapshot)['safe_failure_category'] == category
+    result = row(detail(), canonical=detail(), **snapshot)
+    assert result['safe_failure_category'] == category
+    assert result.get('stable_identity_candidate') is None
+    assert result.get('canonical_url_pattern') is None
 
 
 @pytest.mark.parametrize('snapshot', [None, {'links': 'private'}, {'labels': [123]},
-    {'canonical': 123}, {'pagination': [{'url': 123, 'kind': 'next'}]}])
+    {'canonical': 123}, {'pagination': [{'url': 123, 'kind': 'next'}]},
+    {'ready': 'complete', 'busy': 'false'}, {'spa': 1}, {'controls': [None]}])
 def test_malformed_collect(snapshot):
     page = Mock(url=detail())
     page.evaluate.return_value = snapshot
     assert collect(SimpleNamespace(contexts=[SimpleNamespace(pages=[page])]), ['doda']) == [
         {'platform': 'doda', 'safe_failure_category': 'READ_FAILED'}]
     assert page.method_calls == [('evaluate', (SNAPSHOT,), {})]
+
+
+@pytest.mark.parametrize('tab', ['other', 'secret-tab', 'JD'])
+def test_other_tab_never_establishes_identity(tab):
+    result = row(detail(tab=tab), canonical=detail(tab='jd'))
+    assert result['detail_tab'] == 'other'
+    assert result['page_kind'] == 'other'
+    assert result['stable_identity_candidate'] is None
+    if tab != 'other':
+        assert tab not in json.dumps(result)
+
+
+def test_foreign_and_non_exact_links_are_not_evidence():
+    result = row(LIST, links=[detail().replace('https:', 'http:'),
+        detail().replace(BASE, 'https://doda.jp.evil.test'),
+        detail().replace('987654321', 'not-numeric'), detail() + 'extra/'],
+        pagination=[{'url': LIST.replace(BASE, 'https://foreign.test') + '-page__765432/',
+                     'kind': 'next'}])
+    assert result['job_link_count'] == 0
+    assert result['job_link_tabs'] == []
+    assert result['same_jid_pr_jd_present'] is False
+    assert result['page_suffix_present'] is False
+
+
+def test_unknown_route_has_only_fixed_pattern():
+    result = row(BASE + '/jobs/987654321/FictionalCompany?criteria=private')
+    assert result['route_path'] == '/:unrecognized'
+    assert result['safe_failure_category'] == 'NO_JOB_LINK_EVIDENCE'
+    for private in ['987654321', 'FictionalCompany', 'private', 'criteria']:
+        assert private not in json.dumps(result)

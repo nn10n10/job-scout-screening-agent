@@ -140,6 +140,9 @@ def evidence(platform, url, snapshot):
         return dict(result, safe_failure_category='DOMAIN_BLOCKED')
     if platform == 'doda':
         validate_findy_snapshot(snapshot)
+        for field in ('login', 'busy', 'spa'):
+            if field in snapshot and not isinstance(snapshot[field], bool):
+                raise ValueError('Invalid doda state structure')
         return doda_evidence(url, snapshot)
     if platform in {'findy', 'type'}:
         validate_findy_snapshot(snapshot)
@@ -221,9 +224,11 @@ def doda_evidence(url, snapshot):
     kind = ('detail-preview' if tab == 'pr' else 'detail-jd' if tab == 'jd' else 'other') if detail else 'list' if is_list else 'other'
     category = ('LOADING' if snapshot.get('busy') is True or loading != 'complete'
                 else 'NO_JOB_LINK_EVIDENCE' if kind == 'other' else 'NONE')
+    # An incomplete or unrecognized page cannot establish a stable identity.
+    same = same and category == 'NONE'
     return {
         'platform': 'doda', 'safe_failure_category': category,
-        'route_path': DODA_DETAIL_PATTERN if detail else DODA_LIST_PATTERN if is_list else path_pattern(url),
+        'route_path': DODA_DETAIL_PATTERN if detail else DODA_LIST_PATTERN if is_list else '/:unrecognized',
         'page_kind': kind, 'detail_tab': tab if detail else None,
         'job_link_count': len(jobs),
         'job_link_patterns': [DODA_DETAIL_PATTERN] if jobs else [],
