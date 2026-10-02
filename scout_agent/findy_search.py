@@ -55,8 +55,7 @@ DETAIL = r"""() => {
  const title = titleNode ? text(titleNode) : '';
  const sections = {};
  const labelOf = e => visible(e) && e.matches(carriers) && labels.includes(text(e)) ? text(e) : '';
- // Only subsequent siblings in the label's own container; nested labels stop
- // traversal before another section's contents can enter responsibilities.
+ // Local text only; nested labels and heading/section boundaries stop traversal.
  const collect = (node, label, texts) => {
    if (!visible(node)) return false;
    if (labelOf(node) || node.matches(headings)) return true;
@@ -78,6 +77,19 @@ DETAIL = r"""() => {
    const texts = [];
    for (let n = e.nextElementSibling; n; n = n.nextElementSibling) {
      if (collect(n, label, texts) || e.matches('th')) break;
+   }
+   // Wrapped labels may have their content beside an ancestor. Inspect only
+   // one adjacent subtree per level, never the ancestor's aggregate contents.
+   if (!texts.length) {
+     let ancestor = e;
+     for (let depth = 1; depth <= 3; depth++) {
+       ancestor = ancestor.parentElement;
+       if (!ancestor || ancestor.matches('body,html')) break;
+       const sibling = ancestor.nextElementSibling;
+       if (!sibling || !visible(sibling)) continue;
+       collect(sibling, label, texts);
+       if (texts.length) break;
+     }
    }
    const value = texts.filter(Boolean).join('\n');
    if (value && !sections[label]) sections[label] = value;

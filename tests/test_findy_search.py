@@ -411,3 +411,67 @@ def test_inline_text_is_preserved():
     fields = semantic_dom([['h1', 'Fictional'], ['span', '仕事内容'],
                            ['div', '', [['span', '架空改善']], False, '架空運用']])
     assert fields['responsibilities'] == '架空運用\n架空改善'
+
+
+@pytest.mark.parametrize('label,key', [('仕事内容', 'responsibilities'),
+    ('開発環境', 'technology'), ('給与', 'salary'), ('年収', 'salary'),
+    ('勤務地', 'location')])
+@pytest.mark.parametrize('depth', [1, 2, 3, 4])
+def test_ancestor_fallback_allowlist_and_depth(label, key, depth):
+    wrapped = ['h2', label]
+    for _ in range(depth):
+        wrapped = ['div', '', [wrapped]]
+    fields = semantic_dom([['h1', 'Fictional'], ['section', '', [
+        wrapped, ['div', '', [['p', '架空本文']]]]],
+        ['section', '', [['h2', '福利厚生'], ['p', 'EXCLUDED']]]])
+    assert fields.get(key) == ('架空本文' if depth <= 3 else None)
+
+
+@pytest.mark.parametrize('boundary', [['span', '給与'], ['h3', 'Other heading'],
+                                      ['section', '', [['p', 'EXCLUDED']]]])
+def test_ancestor_fallback_stops_inside_body_subtree(boundary):
+    fields = semantic_dom([['h1', 'Fictional'], ['section', '', [
+        ['div', '', [['h2', '仕事内容']]], ['div', '', [
+            ['p', '架空本文'], boundary, ['p', 'EXCLUDED']]]]]])
+    assert fields['responsibilities'] == '架空本文'
+
+
+def test_direct_sibling_precedes_ancestor_fallback():
+    fields = semantic_dom([['h1', 'Fictional'], ['section', '', [
+        ['div', '', [['h2', '仕事内容'], ['p', '架空直接本文']]],
+        ['div', '', [['p', 'EXCLUDED']]]]]])
+    assert fields['responsibilities'] == '架空直接本文'
+
+
+def test_table_direct_siblings_preserved():
+    fields = semantic_dom([['table', '', [
+        ['tr', '', [['th', '給与'], ['td', '架空600万円']]],
+        ['tr', '', [['th', '勤務地'], ['td', '架空市']]]]]])
+    assert fields == {'salary': '架空600万円', 'location': '架空市'}
+
+
+@pytest.mark.parametrize('sibling', [None, ['div', '', [['p', 'EXCLUDED']], True],
+                                   ['div', '', [['h3', 'Other heading'], ['p', 'EXCLUDED']]]])
+def test_ancestor_no_local_value_remains_missing(sibling):
+    children = [['div', '', [['h2', '仕事内容']]]]
+    if sibling:
+        children.append(sibling)
+    fields = semantic_dom([['h1', 'Fictional'], ['section', '', children]])
+    assert 'responsibilities' not in fields
+    job = job_from_url('/companies/900001/jobs/fictional-key', {})
+    a = adapter({}, job.url)
+    a.page.evaluate.return_value = {'ready': 'complete', 'canonical': job.url,
+                                  'title': 'Fictional', 'sections': {}}
+    with pytest.raises(GreenSearchDOMPending) as exc:
+        a.job_detail(job)
+    assert exc.value.reason == 'RESPONSIBILITIES_MISSING'
+
+
+def test_ancestor_skips_hidden_and_empty_siblings():
+    fields = semantic_dom([['section', '', [
+        ['div', '', [
+            ['div', '', [['h2', '仕事内容']]],
+            ['div', 'EXCLUDED', [], True]]],
+        ['div', '', [['h3', 'Other heading']]]]],
+        ['div', '', [['p', '架空第三层本文']]]])
+    assert fields['responsibilities'] == '架空第三层本文'
