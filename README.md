@@ -412,3 +412,12 @@ Findy Stage B.1 仅补充只读 detail structure diagnostic，正式职责 parse
 
 
 doda 主动 Search：`python -m scout_agent search doda --keyword インフラエンジニア`。首版仅使用已验证的广义职种来源与 `-page__N/` 分页，WebUI 默认勾选该来源并显示分页设置、doda badge 和经身份校验的外部链接。候选身份 `doda:<jid>`、游标 `doda:インフラエンジニア` 与 Scout/其它平台隔离，沿用 recall-first、缓存及人工状态，POLICY_VERSION 不变。详情仅从 NEXT_DATA 结构化字段提取，route/canonical/jid 不一致或缺少标题、职责时安全停止；不复用 Scout 严筛。本次仅虚构数据验证，真实 CLI、缓存复跑和 WebUI 验收待 supervisor。
+
+マイナビ転職 当前仅支持 Stage A.1 只读 discovery，尚未接入主动 Search adapter。由用户手动登录并打开搜索结果、普通求人详情及第二页后，可在授权环境运行：
+
+```bash
+PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
+  --cdp-endpoint http://127.0.0.1:9222 --platform mynavi
+```
+
+输出仅包含固定结构：exact `/jobinfo-:id4/` 与 `/job/:segment/` anchor 计数、allowlist tracking key presence、脱敏 source shape、final `/pg<digits>/` 分页候选以及普通详情 DOM bool。只有 current 与 same-origin canonical 的四段 ID 完全一致，才报告 `jobinfo-id4` 身份候选；该候选尚未用于 production。登录、加载或快照异常 fail-closed；不输出真实 ID、criteria、query value、公司、职位或 JD。Bridge/tests 仅用虚构数据，live 结果须等待 supervisor review 后再确定下一阶段。
