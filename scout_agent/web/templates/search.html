@@ -13,18 +13,21 @@
 <button id="start" type="submit" disabled>开始增量搜索</button></form>
 <section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="error"></p><details><summary>查看详细统计</summary><p id="time"></p><pre id="output"></pre></details></section>
 <h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。默认显示 TARGET / POSSIBLE，可按评价、平台及人工状态切换。</p>
-<nav class="state-filters" aria-label="人工状态过滤">
-{% for value,label in [('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除'),('ALL','全部')] %}
-<a href="{{ pool_url(value, selected_verdict, selected_platform) }}" {% if selected_status == value %}aria-current="page"{% endif %}>{{ label }}（{{ counts[value] }}）</a>
-{% endfor %}</nav>
-<nav class="state-filters" aria-label="评价过滤">
-{% for value,label in [('RECOMMENDED','推荐'),('TARGET','TARGET'),('POSSIBLE','POSSIBLE'),('DROP','DROP'),('ALL','全部')] %}
-<a href="{{ pool_url(selected_status, value, selected_platform) }}" {% if selected_verdict == value %}aria-current="page"{% endif %}>{{ label }}（{{ facets.verdict[value] }}）</a>
-{% endfor %}</nav>
-<nav class="state-filters" aria-label="平台过滤">
-{% for value,label in [('ALL','全部平台'),('green','Green'),('forkwell','Forkwell'),('lapras','LAPRAS'),('findy','Findy'),('type','Type'),('doda','doda'),('mynavi','マイナビ転職')] %}
-<a href="{{ pool_url(selected_status, selected_verdict, value) }}" {% if selected_platform == value %}aria-current="page"{% endif %}>{{ label }}（{{ facets.platform[value] }}）</a>
-{% endfor %}</nav>
+<form action="/search" method="get" class="pool-filters">
+<input type="hidden" name="page" value="1">
+{% for name,legend,options,selected in [
+('status','人工状态',[('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除')],selected_status),
+('verdict','AI 判断',[('TARGET','TARGET'),('POSSIBLE','POSSIBLE'),('DROP','DROP')],selected_verdict),
+('platform','平台',[('green','Green'),('forkwell','Forkwell'),('lapras','LAPRAS'),('findy','Findy'),('type','Type'),('doda','doda'),('mynavi','マイナビ転職')],selected_platform)] %}
+<fieldset class="state-filters"><legend>{{ legend }}</legend>
+<input type="hidden" name="{{ name }}_present" value="1">
+{% for value,label in options %}<label><input type="checkbox" name="{{ name }}" value="{{ value }}" {% if value in selected %}checked{% endif %}>{{ label }}（{{ facets[name][value] }}）</label>{% endfor %}
+{% if name == 'status' %}<a role="button" href="{{ pool_url(all_statuses, selected_verdict, selected_platform) }}">全部</a>
+{% elif name == 'verdict' %}<a role="button" href="{{ pool_url(selected_status, ('TARGET','POSSIBLE'), selected_platform) }}">推荐</a><a role="button" href="{{ pool_url(selected_status, all_verdicts, selected_platform) }}">全部</a>
+{% else %}<a role="button" href="{{ pool_url(selected_status, selected_verdict, all_platforms) }}">全部平台</a>{% endif %}
+</fieldset>{% endfor %}
+<button type="submit">应用筛选</button>
+</form>
 <p>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页</p>
 <nav class="state-filters" aria-label="候选池分页">
 {% if page > 1 %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page - 1) }}">上一页</a>{% endif %}

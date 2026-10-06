@@ -196,3 +196,6 @@ a:hover, a:focus-visible { text-decoration: underline; }
 }
 
 .user-status { font-size: .75rem; }
+
+.pool-filters fieldset { padding: 6px 10px; border: 1px solid var(--border, #dbe3eb); border-radius: 8px; }
+.pool-filters label { display: inline-flex; align-items: center; gap: 4px; }

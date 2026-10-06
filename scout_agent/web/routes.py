@@ -63,14 +63,25 @@ def job_detail(request: Request, scout_id: int) -> HTMLResponse:
 
 @router.get("/search", response_class=HTMLResponse)
 def search_pool(
-    request: Request, status: str = "ACTIVE", verdict: str = "RECOMMENDED",
-    platform: str = "ALL", page: int = Query(default=1, ge=1),
+    request: Request, status: list[str] | None = Query(default=None),
+    verdict: list[str] | None = Query(default=None),
+    platform: list[str] | None = Query(default=None), page: int = Query(default=1, ge=1),
 ):
     from .search_pool import STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
     from .viewmodels import search_cards
     from .search_runs import KEYWORDS, LIMITS
-    if status not in STATUSES or verdict not in VERDICTS or platform not in PLATFORMS:
-        raise HTTPException(422, "候选池过滤参数无效")
+    def selection(name, values, allowed, default):
+        if values is None:
+            if name + '_present' in request.query_params:
+                raise HTTPException(422, "请至少选择一个过滤值")
+            return default
+        if any(value not in allowed for value in values):
+            raise HTTPException(422, "候选池过滤参数无效")
+        return tuple(value for value in allowed if value in values)
+
+    status = selection('status', status, STATUSES, ('ACTIVE',))
+    verdict = selection('verdict', verdict, VERDICTS, ('TARGET', 'POSSIBLE'))
+    platform = selection('platform', platform, PLATFORMS, PLATFORMS)
     raw_page = request.query_params.get('page', '1')
     if not raw_page.isascii() or not raw_page.isdecimal():
         raise HTTPException(422, '页码必须为正整数')
@@ -81,7 +92,8 @@ def search_pool(
     return templates.TemplateResponse(request=request, name="search.html", context={
         **pool, "counts": pool['facets']['status'], "selected_status": status,
         "selected_verdict": verdict, "selected_platform": platform,
-        "pool_url": pool_url, "source_label": source_label,
+        "pool_url": pool_url, "all_statuses": STATUSES, "all_verdicts": VERDICTS,
+        "all_platforms": PLATFORMS, "source_label": source_label,
         "source_labels": {p: {s: source_label(p, s) for s in values} for p, values in {
             'green': KEYWORDS, 'forkwell': ['求人一覧'], 'lapras': ['求人検索'],
             'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],

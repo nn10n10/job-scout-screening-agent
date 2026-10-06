@@ -9,7 +9,7 @@ from scout_agent.green_discovery import Job
 from scout_agent.search import POLICY_VERSION, SearchEvaluation, SearchStore
 from scout_agent.storage.db import Database
 from scout_agent.web.app import create_app
-from scout_agent.web.search_pool import query_pool, source_label
+from scout_agent.web.search_pool import PLATFORMS, STATUSES, VERDICTS, pool_url, query_pool, source_label
 
 
 @pytest.fixture
@@ -46,26 +46,26 @@ def test_facets_and_combinations(pool):
         rows, states = store.current_results(), store.user_states()
     def match(item, s, v, p):
         job, result = item
-        return ((s == 'ALL' or states.get(job.job_id, 'ACTIVE') == s)
-                and (v == 'ALL' or result.verdict == v or v == 'RECOMMENDED' and result.verdict != 'DROP')
-                and (p == 'ALL' or (job.platform or 'green') == p))
-    for status in ('ACTIVE', 'APPLIED', 'EXCLUDED', 'ALL'):
-        for verdict in ('RECOMMENDED', 'TARGET', 'POSSIBLE', 'DROP', 'ALL'):
-            for platform in ('ALL', 'green', 'forkwell', 'doda'):
+        return (states.get(job.job_id, 'ACTIVE') in s
+                and result.verdict in v
+                and (job.platform or 'green') in p)
+    for status in (('ACTIVE',), ('APPLIED',), ('EXCLUDED',), ('ACTIVE','APPLIED'), STATUSES):
+        for verdict in (('TARGET',), ('TARGET','POSSIBLE'), ('POSSIBLE','DROP'), VERDICTS):
+            for platform in (PLATFORMS, ('green',), ('forkwell',), ('doda',), ('green','forkwell')):
                 data = query_pool(pool, status, verdict, platform, 1)
                 assert data['total'] == sum(match(row, status, verdict, platform) for row in rows)
                 assert len(data['results']) == min(data['total'], 20)
                 for key, counts in data['facets'].items():
                     for value, count in counts.items():
                         dims = dict(status=status, verdict=verdict, platform=platform)
-                        dims[key] = value
+                        dims[key] = (value,)
                         assert count == sum(match(row, *dims.values()) for row in rows)
 
 
 def test_sort_pagination_and_legacy(pool):
     all_rows = []
     for page in range(1, 5):
-        data = query_pool(pool, 'ALL', 'ALL', 'ALL', page)
+        data = query_pool(pool, STATUSES, VERDICTS, PLATFORMS, page)
         assert len(data['results']) == (20 if page < 4 else 3)
         all_rows.extend(data['results'])
     with sqlite3.connect(pool) as conn:
@@ -78,7 +78,7 @@ def test_sort_pagination_and_legacy(pool):
         conn.execute('DROP TABLE search_job_user_state')
         conn.execute('ALTER TABLE search_jobs DROP COLUMN last_seen_at')
         before = conn.execute('SELECT sql FROM sqlite_master ORDER BY name').fetchall()
-    assert query_pool(pool, 'ACTIVE', 'ALL', 'ALL', 1)['total'] == 63
+    assert query_pool(pool, ('ACTIVE',), VERDICTS, PLATFORMS, 1)['total'] == 63
     with sqlite3.connect(pool) as conn:
         assert conn.execute('SELECT sql FROM sqlite_master ORDER BY name').fetchall() == before
 
@@ -88,17 +88,21 @@ def test_http_filters_links_dom_and_boundaries(pool):
     with TestClient(app) as client:
         html = client.get('/search').text
         assert html.count('<article class="search-row">') == 20
-        default = query_pool(pool, 'ACTIVE', 'RECOMMENDED', 'ALL', 1)
+        default = query_pool(pool, ('ACTIVE',), ('TARGET','POSSIBLE'), PLATFORMS, 1)
         assert f'共 {default["total"]} 条' in html
         for params in ({'status':'bad'}, {'verdict':'bad'}, {'platform':'bad'}, {'page':0}, {'page':-1}, {'page':'bad'}, {'page':'1.5'}, {'page':'1.0'}, {'page':'+1'}, {'page':' 1 '}):
             assert client.get('/search', params=params).status_code == 422
-        response = client.get('/search?status=ALL&verdict=ALL&platform=ALL&page=999', follow_redirects=False)
+        response = client.get(pool_url(STATUSES, VERDICTS, PLATFORMS, 999), follow_redirects=False)
         assert response.status_code == 303
         assert parse_qs(urlsplit(response.headers['location']).query)['page'] == ['4']
         html = client.get('/search?status=APPLIED&verdict=TARGET&platform=green').text
-        assert '/search?status=APPLIED&amp;verdict=POSSIBLE&amp;platform=green&amp;page=1' in html
-        assert '/search?status=EXCLUDED&amp;verdict=TARGET&amp;platform=green&amp;page=1' in html
-        assert '/search?status=APPLIED&amp;verdict=TARGET&amp;platform=doda&amp;page=1' in html
+        assert '<form action="/search" method="get"' in html
+        assert 'name="page" value="1"' in html
+        assert 'name="status" value="APPLIED" checked' in html
+        assert 'name="verdict" value="TARGET" checked' in html
+        assert 'name="platform" value="green" checked' in html
+        assert 'verdict=TARGET&amp;verdict=POSSIBLE' in html
+        assert 'value="ALL"' not in html and 'value="RECOMMENDED"' not in html
         assert '<details><summary>查看详细统计</summary>' in html
         assert 'value="AWS" checked>AWS 相关职位' in html
         assert 'input.value = value' in html
@@ -130,8 +134,8 @@ def test_state_change_reload_normalizes_last_page(pool):
                     if store.user_states().get(job.job_id, 'ACTIVE') == 'ACTIVE']
             for job in jobs[:8]:
                 store.set_user_state(job.job_id, 'APPLIED')
-        url = '/search?status=APPLIED&verdict=ALL&platform=ALL&page=2'
-        data = query_pool(pool, 'APPLIED', 'ALL', 'ALL', 2)
+        url = pool_url(('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2)
+        data = query_pool(pool, ('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2)
         assert data['total'] == 21 and len(data['results']) == 1
         job_id = data['results'][0][0].job_id
         assert client.get(url).text.count('<article class="search-row">') == 1
@@ -141,6 +145,29 @@ def test_state_change_reload_normalizes_last_page(pool):
         reloaded = client.get(url, follow_redirects=False)
         assert reloaded.status_code == 303
         assert parse_qs(urlsplit(reloaded.headers['location']).query) == {
-            'status':['APPLIED'], 'verdict':['ALL'], 'platform':['ALL'], 'page':['1']}
+            'status':['APPLIED','EXCLUDED'], 'verdict':list(VERDICTS), 'platform':list(PLATFORMS), 'page':['1']}
         for platform in ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi'):
             assert client.get('/search', params={'platform':platform}).status_code == 200
+
+
+@pytest.mark.parametrize('dimension', ['status', 'verdict', 'platform'])
+def test_empty_invalid_and_presets(pool, dimension):
+    with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
+        for value in ('', 'ALL', 'RECOMMENDED', 'invalid'):
+            assert client.get('/search', params={dimension: value}).status_code == 422
+        assert client.get('/search', params={dimension + '_present': '1'}).status_code == 422
+
+
+def test_repeated_query_normalization(pool):
+    with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
+        response = client.get('/search?status=APPLIED&status=ACTIVE&status=ACTIVE'
+                              '&verdict=POSSIBLE&verdict=TARGET&platform=forkwell&platform=green&page=999',
+                              follow_redirects=False)
+        assert response.status_code == 303
+        query = parse_qs(urlsplit(response.headers['location']).query)
+        assert query['status'] == ['ACTIVE', 'APPLIED']
+        assert query['verdict'] == ['TARGET', 'POSSIBLE']
+        assert query['platform'] == ['green', 'forkwell']
+        html = client.get(response.headers['location']).text
+        assert html.count('<article class="search-row">') <= 20
+        assert 'if (response.ok) { location.reload(); return; }' in html

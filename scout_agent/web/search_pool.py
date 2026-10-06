@@ -4,14 +4,14 @@ from urllib.parse import urlencode
 from scout_agent.search import SearchStore
 from scout_agent.storage.db import Database
 
-STATUSES = ('ACTIVE', 'APPLIED', 'EXCLUDED', 'ALL')
-VERDICTS = ('RECOMMENDED', 'TARGET', 'POSSIBLE', 'DROP', 'ALL')
-PLATFORMS = ('ALL', 'green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi')
+STATUSES = ('ACTIVE', 'APPLIED', 'EXCLUDED')
+VERDICTS = ('TARGET', 'POSSIBLE', 'DROP')
+PLATFORMS = ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi')
 PAGE_SIZE = 20
 
 
 def pool_url(status, verdict, platform, page=1):
-    return '/search?' + urlencode(dict(status=status, verdict=verdict, platform=platform, page=page))
+    return '/search?' + urlencode(dict(status=status, verdict=verdict, platform=platform, page=page), doseq=True)
 
 
 def query_pool(path, status, verdict, platform, page):
@@ -29,15 +29,15 @@ def query_pool(path, status, verdict, platform, page):
 
     def matches(item, s=status, v=verdict, p=platform):
         job, result = item
-        return ((s == 'ALL' or states.get(job.job_id, 'ACTIVE') == s)
-                and (v == 'ALL' or (result.verdict in ('TARGET', 'POSSIBLE') if v == 'RECOMMENDED' else result.verdict == v))
-                and (p == 'ALL' or (job.platform or 'green') == p))
+        return (states.get(job.job_id, 'ACTIVE') in s
+                and result.verdict in v and (job.platform or 'green') in p)
 
     counts = {
-        'status': {s: sum(matches(item, s=s) for item in results) for s in STATUSES},
-        'verdict': {v: sum(matches(item, v=v) for item in results) for v in VERDICTS},
-        'platform': {p: sum(matches(item, p=p) for item in results) for p in PLATFORMS},
+        'status': {s: sum(matches(item, s=(s,)) for item in results) for s in STATUSES},
+        'verdict': {v: sum(matches(item, v=(v,)) for item in results) for v in VERDICTS},
+        'platform': {p: sum(matches(item, p=(p,)) for item in results) for p in PLATFORMS},
     }
+
     rows = [item for item in results if matches(item)]
     # Stable sorts: job ID breaks ties, NULL timestamps follow known timestamps.
     rows.sort(key=lambda item: item[0].job_id)
