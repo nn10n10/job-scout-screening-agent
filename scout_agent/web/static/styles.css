@@ -199,3 +199,8 @@ a:hover, a:focus-visible { text-decoration: underline; }
 
 .pool-filters fieldset { padding: 6px 10px; border: 1px solid var(--border, #dbe3eb); border-radius: 8px; }
 .pool-filters label { display: inline-flex; align-items: center; gap: 4px; }
+.pool-filters [data-filter-preset] {
+  padding: 4px 10px; border: 1px solid #ccd7df; border-radius: 6px;
+  background: #fff; color: #233044; font: inherit; cursor: pointer;
+}
+.pool-filters [data-filter-preset]:hover { background: #e5f2f1; }

@@ -19,12 +19,12 @@
 ('status','人工状态',[('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除')],selected_status),
 ('verdict','AI 判断',[('TARGET','TARGET'),('POSSIBLE','POSSIBLE'),('DROP','DROP')],selected_verdict),
 ('platform','平台',[('green','Green'),('forkwell','Forkwell'),('lapras','LAPRAS'),('findy','Findy'),('type','Type'),('doda','doda'),('mynavi','マイナビ転職')],selected_platform)] %}
-<fieldset class="state-filters"><legend>{{ legend }}</legend>
+<fieldset class="state-filters" data-filter-dimension="{{ name }}"><legend>{{ legend }}</legend>
 <input type="hidden" name="{{ name }}_present" value="1">
 {% for value,label in options %}<label><input type="checkbox" name="{{ name }}" value="{{ value }}" {% if value in selected %}checked{% endif %}>{{ label }}（{{ facets[name][value] }}）</label>{% endfor %}
-{% if name == 'status' %}<a role="button" href="{{ pool_url(all_statuses, selected_verdict, selected_platform) }}">全部</a>
-{% elif name == 'verdict' %}<a role="button" href="{{ pool_url(selected_status, ('TARGET','POSSIBLE'), selected_platform) }}">推荐</a><a role="button" href="{{ pool_url(selected_status, all_verdicts, selected_platform) }}">全部</a>
-{% else %}<a role="button" href="{{ pool_url(selected_status, selected_verdict, all_platforms) }}">全部平台</a>{% endif %}
+{% if name == 'status' %}<button type="button" data-filter-preset="all">全部</button>
+{% elif name == 'verdict' %}<button type="button" data-filter-preset="recommended">推荐</button><button type="button" data-filter-preset="all">全部</button>
+{% else %}<button type="button" data-filter-preset="all">全部平台</button>{% endif %}
 </fieldset>{% endfor %}
 <button type="submit">应用筛选</button>
 </form>
@@ -70,6 +70,15 @@
 </section>
 </main>
 <script src="{{ url_for('static', path='/search_config.js') }}"></script>
+<script id="pool-filter-presets">
+document.querySelectorAll('[data-filter-preset]').forEach(preset => {
+  preset.addEventListener('click', () => {
+    preset.closest('[data-filter-dimension]').querySelectorAll('input[type="checkbox"]').forEach(input => {
+      input.checked = preset.dataset.filterPreset === 'all' || input.value === 'TARGET' || input.value === 'POSSIBLE';
+    });
+  });
+});
+</script>
 <script>
 const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');

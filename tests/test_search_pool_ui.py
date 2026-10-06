@@ -1,6 +1,11 @@
 """Fictional, local-only pool presentation checks."""
 import sqlite3
-from urllib.parse import parse_qs, urlsplit
+import json
+import re
+import shutil
+import subprocess
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,7 +106,7 @@ def test_http_filters_links_dom_and_boundaries(pool):
         assert 'name="status" value="APPLIED" checked' in html
         assert 'name="verdict" value="TARGET" checked' in html
         assert 'name="platform" value="green" checked' in html
-        assert 'verdict=TARGET&amp;verdict=POSSIBLE' in html
+        assert 'data-filter-preset="recommended"' in html
         assert 'value="ALL"' not in html and 'value="RECOMMENDED"' not in html
         assert '<details><summary>查看详细统计</summary>' in html
         assert 'value="AWS" checked>AWS 相关职位' in html
@@ -171,3 +176,124 @@ def test_repeated_query_normalization(pool):
         html = client.get(response.headers['location']).text
         assert html.count('<article class="search-row">') <= 20
         assert 'if (response.ok) { location.reload(); return; }' in html
+
+
+class PoolForm(HTMLParser):
+    """Read actual form controls without a browser or JavaScript."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.form = None
+        self.inside = False
+        self.dimension = None
+        self.inputs = []
+        self.presets = []
+        self.submit = None
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'form':
+            self.inside = attrs.get('class') == 'pool-filters'
+            if self.inside:
+                self.form = attrs
+        if not self.inside:
+            return
+        if tag == 'fieldset':
+            self.dimension = attrs['data-filter-dimension']
+        elif tag == 'input':
+            self.inputs.append(attrs)
+        elif tag == 'button' and 'data-filter-preset' in attrs:
+            self.presets.append((self.dimension, attrs))
+        elif tag == 'button' and attrs.get('type') == 'submit':
+            self.submit = attrs
+        elif tag == 'a':
+            pytest.fail('Presets must not navigate')
+
+    def handle_endtag(self, tag):
+        if tag == 'form':
+            self.inside = False
+        elif tag == 'fieldset':
+            self.dimension = None
+
+
+def test_local_presets_and_apply_repeated_query(pool):
+    with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
+        html = client.get('/search?status=APPLIED&verdict=DROP&platform=green').text
+        form = PoolForm(html)
+        assert form.form['action'] == '/search' and form.form['method'] == 'get'
+        assert form.submit is not None
+        assert [(dimension, attrs['data-filter-preset']) for dimension, attrs in form.presets] == [
+            ('status', 'all'), ('verdict', 'recommended'), ('verdict', 'all'), ('platform', 'all')]
+        assert all(attrs['type'] == 'button' and 'href' not in attrs for _, attrs in form.presets)
+        controls = [dict(name=item['name'], value=item['value'], checked='checked' in item,
+                         type=item['type']) for item in form.inputs]
+        presets = [dict(dimension=dimension, value=attrs['data-filter-preset'])
+                   for dimension, attrs in form.presets]
+        node = shutil.which('node')
+        assert node, 'Node is required for the local preset regression fixture'
+        script = re.search(r'<script id="pool-filter-presets">(.*?)</script>', html, re.S)[1]
+        harness = r"""
+const assert = require('node:assert/strict');
+const controls = CONTROLS;
+const definitions = PRESETS;
+const forbidden = () => { throw Error('Preset must only change checked state'); };
+globalThis.fetch = forbidden;
+globalThis.location = new Proxy({}, {get: forbidden, set: forbidden});
+globalThis.scrollTo = forbidden;
+const form = {submit: forbidden, requestSubmit: forbidden};
+const buttons = definitions.map(definition => ({
+  dataset: {filterPreset: definition.value},
+  closest(selector) {
+    assert.equal(selector, '[data-filter-dimension]');
+    return {querySelectorAll(selector) {
+      assert.equal(selector, 'input[type="checkbox"]');
+      return controls.filter(input => input.type === 'checkbox' && input.name === definition.dimension);
+    }, ...form};
+  },
+  addEventListener(event, callback) { assert.equal(event, 'click'); this.click = callback; }
+}));
+globalThis.document = {querySelectorAll(selector) {
+  assert.equal(selector, '[data-filter-preset]'); return buttons;
+}};
+""".replace('CONTROLS', json.dumps(controls)).replace('PRESETS', json.dumps(presets))
+        checks = r"""
+const selected = name => controls.filter(input => input.name === name && input.checked).map(input => input.value);
+const click = (dimension, preset) => {
+  const others = JSON.stringify(controls.filter(input => input.name !== dimension));
+  buttons[definitions.findIndex(item => item.dimension === dimension && item.value === preset)].click();
+  assert.equal(JSON.stringify(controls.filter(input => input.name !== dimension)), others);
+};
+click('verdict', 'recommended');
+assert.deepEqual(selected('verdict'), ['TARGET', 'POSSIBLE']);
+click('verdict', 'all');
+assert.deepEqual(selected('verdict'), ['TARGET', 'POSSIBLE', 'DROP']);
+click('platform', 'all');
+assert.deepEqual(selected('platform'), ['green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi']);
+click('status', 'all');
+assert.deepEqual(selected('status'), ['ACTIVE', 'APPLIED', 'EXCLUDED']);
+const query = new URLSearchParams(controls.filter(input => input.type === 'hidden' || input.checked)
+  .map(input => [input.name, input.value]));
+console.log(query.toString());
+"""
+        result = subprocess.run([node, '-e', harness + script + checks], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        query = parse_qs(result.stdout.strip())
+        assert query == dict(status=list(STATUSES), verdict=list(VERDICTS), platform=list(PLATFORMS),
+                            page=['1'], status_present=['1'], verdict_present=['1'], platform_present=['1'])
+        response = client.get('/search?' + result.stdout.strip())
+        assert response.status_code == 200
+        assert '共 63 条' in response.text
+
+        # Without JS, manually checked native controls submit the same repeated query protocol.
+        manual = {'status': ('ACTIVE', 'APPLIED'), 'verdict': ('POSSIBLE', 'DROP'),
+                  'platform': ('green', 'forkwell')}
+        query = urlencode([(item['name'], item['value']) for item in form.inputs
+                           if item['type'] == 'hidden' or item['value'] in manual[item['name']]])
+        response = client.get(form.form['action'] + '?' + query)
+        assert response.status_code == 200
+        expected = query_pool(pool, manual['status'], manual['verdict'], manual['platform'], 1)
+        assert f'共 {expected["total"]} 条' in response.text
+        for name, values in manual.items():
+            for value in values:
+                assert f'name="{name}" value="{value}" checked' in response.text
