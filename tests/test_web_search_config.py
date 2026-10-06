@@ -123,7 +123,7 @@ def test_search_controls_labels_structure_and_styles(tmp_path):
     with TestClient(app) as client:
         html = client.get('/search').text
         css = client.get('/static/styles.css').text
-    for label in ['搜索来源', '每轮深页数', '最大扫描页', '详情读取上限', 'AI 评价上限', 'Codex 批次大小']:
+    for label in ['扫描范围', '每轮深页数', '最大扫描页', '详情读取上限', 'AI 评价上限', 'Codex 批次大小']:
         assert label in html
     parser = ControlsParser()
     parser.feed(html)
@@ -297,6 +297,7 @@ for (const name of names) form.elements[name] = {
  value:99, disabled:false, closest(selector) {
    assert.equal(selector, '.field'); return fields[name];
  }};
+const sourceLabels = {green:{AWS:'AWS 相关职位'}, forkwell:{'求人一覧':'全部求人'}};
 const configLimits = {coverage_pages:[2],max_depth:[15]};
 const platformSources = {doda:['インフラエンジニア'],green:['AWS'],forkwell:['求人一覧'],lapras:['求人検索'],type:['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
 const note = {hidden:true};

@@ -6,23 +6,36 @@
 <p>来源：search（主动搜索）。按钮启动本地只读扫描，需要已登录的 Chrome CDP。</p></header>
 <form id="search-form" class="search-controls">
 <label>搜索平台<select name="platform"><option value="green">Green</option><option value="forkwell">Forkwell</option><option value="lapras">LAPRAS</option><option value="findy">Findy</option><option value="type">Type</option><option value="doda">doda</option><option value="mynavi">マイナビ転職</option></select></label>
-<fieldset class="search-sources"><legend>搜索来源</legend><div class="search-source-options">{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source }}</label>{% endfor %}</div></fieldset>
+<fieldset class="search-sources"><legend>扫描范围</legend><div class="search-source-options">{% for source in sources %}<label><input type="checkbox" name="sources" value="{{ source }}" checked>{{ source_label('green', source) }}</label>{% endfor %}</div></fieldset>
 {% for name,label,help in [('coverage_pages','每轮深页数','每轮每个来源额外扫描多少个深页'),('max_depth','最大扫描页','每个来源扫描的最大页码')] %}<label class="field search-basic">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}
 <button type="button" class="search-advanced-toggle" aria-expanded="false" aria-controls="search-advanced-panel">高级设置</button><div class="search-advanced-panel" id="search-advanced-panel" hidden>{% for name,label,help in [('max_jobs','详情读取上限','本次最多读取多少个职位详情'),('max_model_jobs','AI 评价上限','本次最多评价多少个职位'),('codex_batch_size','Codex 批次大小','仅影响本次搜索，不修改全局配置')] %}<label class="field">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}</div>
 <p id="pagination-note" hidden>LAPRAS 当前固定扫描 /jobs/home 第一页，分页尚未验证。</p>
 <button id="start" type="submit" disabled>开始增量搜索</button></form>
-<section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="time"></p><p id="error"></p><pre id="output"></pre></section>
-<h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。优先显示 TARGET / POSSIBLE；未评价职位保留待处理。</p>
+<section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="error"></p><details><summary>查看详细统计</summary><p id="time"></p><pre id="output"></pre></details></section>
+<h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。默认显示 TARGET / POSSIBLE，可按评价、平台及人工状态切换。</p>
 <nav class="state-filters" aria-label="人工状态过滤">
 {% for value,label in [('ACTIVE','待处理'),('APPLIED','已投递'),('EXCLUDED','已排除'),('ALL','全部')] %}
-<a href="/search?status={{ value }}" {% if selected_status == value %}aria-current="page"{% endif %}>{{ label }}（{{ counts[value] }}）</a>
+<a href="{{ pool_url(value, selected_verdict, selected_platform) }}" {% if selected_status == value %}aria-current="page"{% endif %}>{{ label }}（{{ counts[value] }}）</a>
 {% endfor %}</nav>
+<nav class="state-filters" aria-label="评价过滤">
+{% for value,label in [('RECOMMENDED','推荐'),('TARGET','TARGET'),('POSSIBLE','POSSIBLE'),('DROP','DROP'),('ALL','全部')] %}
+<a href="{{ pool_url(selected_status, value, selected_platform) }}" {% if selected_verdict == value %}aria-current="page"{% endif %}>{{ label }}（{{ facets.verdict[value] }}）</a>
+{% endfor %}</nav>
+<nav class="state-filters" aria-label="平台过滤">
+{% for value,label in [('ALL','全部平台'),('green','Green'),('forkwell','Forkwell'),('lapras','LAPRAS'),('findy','Findy'),('type','Type'),('doda','doda'),('mynavi','マイナビ転職')] %}
+<a href="{{ pool_url(selected_status, selected_verdict, value) }}" {% if selected_platform == value %}aria-current="page"{% endif %}>{{ label }}（{{ facets.platform[value] }}）</a>
+{% endfor %}</nav>
+<p>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页</p>
+<nav class="state-filters" aria-label="候选池分页">
+{% if page > 1 %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page - 1) }}">上一页</a>{% endif %}
+{% if page < pages %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page + 1) }}">下一页</a>{% endif %}
+</nav>
 <p>人工状态仅保存到本地，不会向招聘平台投递、拒绝或收藏。</p>
 <section class="search-list">
 {% for card in cards %}
 <article class="search-row">
 <div class="search-compact">
-<div class="search-badges"><span class="platform">{{ card.platform_label }}</span><span class="verdict">{{ card.verdict }}</span><span class="user-status">{{ {'ACTIVE':'待处理','APPLIED':'已投递','EXCLUDED':'已排除'}[card.user_status] }}</span></div>
+<div class="search-badges"><span class="platform">{{ card.platform_label }}</span><span class="verdict">{{ card.verdict }}</span>{% if card.user_status != 'ACTIVE' %}<span class="user-status">{{ {'ACTIVE':'待处理','APPLIED':'已投递','EXCLUDED':'已排除'}[card.user_status] }}</span>{% endif %}</div>
 <div class="search-title"><h3>{{ card.title or '职位未注明' }}</h3><span class="muted">{{ card.company or '公司未注明' }}</span></div>
 <span class="compact-preview">{{ card.salary_preview or '薪资未注明' }}</span>
 <span class="compact-preview location-preview">{{ card.location_preview or '地点未注明' }}</span>
@@ -58,6 +71,7 @@
 const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');
 const configLimits = {{ limits|tojson }};
+const sourceLabels = {{ source_labels|default({})|tojson }};
 const platformSources = {mynavi: ['インフラエンジニア'], doda: ['インフラエンジニア'], green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
 function renderSources() {
   const container = form.querySelector('.search-source-options');
@@ -75,7 +89,7 @@ function renderSources() {
   for (const value of platformSources[form.elements.platform.value]) {
     const label = document.createElement('label'), input = document.createElement('input');
     input.type = 'checkbox'; input.name = 'sources'; input.value = value; input.checked = true;
-    label.append(input, document.createTextNode(value)); container.append(label);
+    label.append(input, document.createTextNode(sourceLabels[form.elements.platform.value]?.[value] || value)); container.append(label);
   }
 }
 form.elements.platform.addEventListener('change', renderSources);
@@ -150,7 +164,7 @@ async function poll() {
 }
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!SearchConfig.save(form, configLimits)) { document.getElementById('error').textContent = '请选择搜索来源并检查整数范围。'; return; }
+  if (!SearchConfig.save(form, configLimits)) { document.getElementById('error').textContent = '请选择扫描范围并检查整数范围。'; return; }
   button.disabled = true;
   setActionsDisabled(true);
   const data = {platform: form.elements.platform.value, sources: [...form.querySelectorAll('[name=sources]:checked')].map(input => input.value)};

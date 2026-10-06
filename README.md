@@ -298,7 +298,7 @@ TARGET 必须有主要基础设施职责证据。模型预算耗尽的职位保�
 模型不接收整页 HTML、导航/footer 或重复字段行。全局按公司 ID + job ID 去重，
 合并实际遇到的 matched keywords。按 stable job ID + content_hash + policy_version
 永久保留历史缓存，仅 JD 内容或策略版本改变时重新评价。
-报告默认展示 TARGET + POSSIBLE，DROP 仅计数；Web UI `/search` 按人工状态过滤，保留 TARGET → POSSIBLE → DROP 排序。
+报告默认展示 TARGET + POSSIBLE，DROP 仅计数；Web UI `/search` 默认显示 ACTIVE + RECOMMENDED（TARGET / POSSIBLE）+ 全部平台，支持人工状态、verdict、平台三维过滤，计数覆盖完整候选池。每页固定 20 条，按 TARGET → POSSIBLE → DROP、最近 last_seen_at（NULL 在后）、job_id 排序。过滤状态保存在 URL 中，切换过滤回到第 1 页；越界页码重定向到最后一页，空池回到第 1 页。扫描范围仅使用友好展示标签，真实 source value 和游标保持原值；运行详细统计默认折叠。
 最终统计包括原始卡片、独立职位、本地排除、缓存、送模型职位、批次及各分类数量。
 
 **代码已启用，但自动测试不代表 live verified。首次使用前建议先运行 `--probe`。**

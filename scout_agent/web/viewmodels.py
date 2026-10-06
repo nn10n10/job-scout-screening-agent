@@ -187,6 +187,7 @@ def evaluation_detail(result: StoredEvaluation) -> EvaluationDetail:
 
 
 def search_cards(results, user_states=None):
+    from .search_pool import source_label
     from scout_agent.green_discovery import Job
     cards = []
     for job, result in results:
@@ -223,7 +224,7 @@ def search_cards(results, user_states=None):
             salary_preview=preview(job.fields.get('salary'), 40),
             location_preview=preview(job.fields.get('location')),
             sources=job.matched_keywords,
-            source_preview=preview('、'.join(job.matched_keywords)),
+            source_preview=preview('、'.join(source_label(job.platform or 'green', source) for source in job.matched_keywords)),
             summary_preview=preview(result.summary), summary=result.summary,
             reasons=result.reasons, concerns=result.concerns, url=url,
             **{key: job.fields.get(key) for key in

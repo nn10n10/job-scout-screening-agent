@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from .services import (
@@ -62,30 +62,32 @@ def job_detail(request: Request, scout_id: int) -> HTMLResponse:
 
 
 @router.get("/search", response_class=HTMLResponse)
-def search_pool(request: Request, status: str = "ACTIVE") -> HTMLResponse:
-    from scout_agent.search import SearchStore
-    from scout_agent.storage.db import Database
-    if status not in ('ACTIVE', 'APPLIED', 'EXCLUDED', 'ALL'):
-        raise HTTPException(422, "人工状态过滤无效")
-    states = {}
-    # Do not migrate from a GET route; old databases simply have no search pool.
-    if not request.app.state.db_path.exists():
-        results = []
-    else:
-        with Database(request.app.state.db_path, read_only=True) as db:
-            exists = db.conn.execute("SELECT 1 FROM sqlite_master WHERE name='search_jobs'").fetchone()
-            store = SearchStore(db, migrate=False)
-            results = store.current_results() if exists else []
-            states = store.user_states()
+def search_pool(
+    request: Request, status: str = "ACTIVE", verdict: str = "RECOMMENDED",
+    platform: str = "ALL", page: int = Query(default=1, ge=1),
+):
+    from .search_pool import STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
     from .viewmodels import search_cards
     from .search_runs import KEYWORDS, LIMITS
-    cards = search_cards(results, states)
-    counts = {key: sum(card['user_status'] == key for card in cards)
-              for key in ('ACTIVE', 'APPLIED', 'EXCLUDED')}
-    counts['ALL'] = len(cards)
+    if status not in STATUSES or verdict not in VERDICTS or platform not in PLATFORMS:
+        raise HTTPException(422, "候选池过滤参数无效")
+    raw_page = request.query_params.get('page', '1')
+    if not raw_page.isascii() or not raw_page.isdecimal():
+        raise HTTPException(422, '页码必须为正整数')
+    pool = query_pool(request.app.state.db_path, status, verdict, platform, page)
+    if page != pool['page']:
+        return RedirectResponse(pool_url(status, verdict, platform, pool['page']), status_code=303,
+                                headers=PRIVATE_HEADERS)
     return templates.TemplateResponse(request=request, name="search.html", context={
-        "counts": counts, "selected_status": status,
-        "cards": [card for card in cards if status == 'ALL' or card['user_status'] == status], "sources": KEYWORDS, "limits": LIMITS,
+        **pool, "counts": pool['facets']['status'], "selected_status": status,
+        "selected_verdict": verdict, "selected_platform": platform,
+        "pool_url": pool_url, "source_label": source_label,
+        "source_labels": {p: {s: source_label(p, s) for s in values} for p, values in {
+            'green': KEYWORDS, 'forkwell': ['求人一覧'], 'lapras': ['求人検索'],
+            'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
+            'doda': ['インフラエンジニア'], 'mynavi': ['インフラエンジニア'],
+        }.items()},
+        "cards": search_cards(pool['results'], pool['states']), "sources": KEYWORDS, "limits": LIMITS,
         "csrf_token": request.app.state.search_runs.csrf_token,
     }, headers=PRIVATE_HEADERS)
 
