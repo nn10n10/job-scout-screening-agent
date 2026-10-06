@@ -204,3 +204,33 @@ a:hover, a:focus-visible { text-decoration: underline; }
   background: #fff; color: #233044; font: inherit; cursor: pointer;
 }
 .pool-filters [data-filter-preset]:hover { background: #e5f2f1; }
+
+.scout-list { display: grid; gap: 6px; }
+.scout-row { display: grid; grid-template-columns: minmax(220px, 1.2fr) minmax(200px, 1fr) minmax(180px, 1fr) auto; gap: 12px; align-items: center; padding: 12px; background: #fff; border: 1px solid #dfe7ec; border-radius: 8px; }
+.scout-row h2 { font-size: 1rem; margin: 4px 0; }
+.scout-row .company { margin: 4px 0; font-size: .85rem; }
+.scout-row .card-secondary { margin: 0; font-size: .75rem; gap: 4px; }
+.scout-row .summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font-size: .8rem; }
+.scout-row .card-tertiary { min-width: 0; }
+.scout-row .concerns-preview { font-size: .75rem; margin: 4px 0; }
+.scout-row .concerns-preview p { display: none; }
+.scout-row .concerns-preview ul { margin: 0; padding-left: 16px; }
+.scout-row .concerns-preview li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scout-row .card-footer { padding: 0; border: 0; margin: 0; }
+.scout-row .links { display: grid; gap: 8px; font-size: .8rem; }
+.audit-info { color: #718096; font-size: .65rem; }
+.pagination { display: flex; gap: 18px; margin: 20px 0; }
+#daily-run { background: #176b80; color: #fff; border: 0; padding: 12px 18px; border-radius: 8px; cursor: pointer; }
+#daily-run:disabled { opacity: .6; cursor: wait; }
+#daily-status { color: #607087; font-size: .8rem; }
+@media (max-width: 800px) { .scout-row { grid-template-columns: 1fr; gap: 6px; } }
+.scout-row .card-tertiary { margin-bottom: 0; }
+.inline-detail { grid-column: 1 / -1; font-size: .85rem; }
+.inline-detail summary { cursor: pointer; font-weight: 650; }
+.inline-detail .collapse-label, .inline-detail[open] .expand-label { display: none; }
+.inline-detail[open] .collapse-label { display: inline; }
+.inline-detail .detail-section { margin: 12px 0; }
+.inline-detail .detail-section h2 { font-size: .9rem; }
+.state-actions { display: flex; gap: 4px; }
+.state-actions button, #all-statuses { padding: 3px 7px; font-size: .75rem; }
+.status-filter { display: flex; flex-wrap: wrap; gap: 8px; font-size: .8rem; }

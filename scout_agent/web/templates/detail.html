@@ -21,39 +21,7 @@
         <h1>{{ job.job_title or '职位未注明' }}</h1>
       </div>
 
-      <dl class="detail-facts">
-        <div><dt>置信度</dt><dd>{{ '%.0f'|format(job.confidence * 100) }}%</dd></div>
-        <div><dt>薪资</dt><dd>{{ job.salary_display }}</dd></div>
-        {% if job.location %}<div><dt>地点</dt><dd>{{ job.location }}</dd></div>{% endif %}
-        <div><dt>Remote</dt><dd>{{ job.remote_evidence or '未确认' }}</dd></div>
-        <div><dt>年間休日</dt><dd>{{ job.annual_holidays ~ '日' if job.annual_holidays is not none else '不明' }}</dd></div>
-        <div><dt>Provider / Model</dt><dd>{{ job.provider }} / {{ job.model_name }}</dd></div>
-        <div><dt>评价时间</dt><dd>{{ job.evaluated_at }}</dd></div>
-      </dl>
-
-      <section class="detail-section">
-        <h2>摘要</h2>
-        <p>{{ job.summary }}</p>
-      </section>
-      {% if job.priority_evidence %}
-        <section class="detail-section">
-          <h2>Priority evidence</h2>
-          <p>{{ job.priority_evidence }}</p>
-        </section>
-      {% endif %}
-      <section class="detail-section">
-        <h2>理由</h2>
-        {% if job.reasons %}
-          <ul>{% for reason in job.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
-        {% else %}<p class="muted">未记录</p>{% endif %}
-      </section>
-      <section class="detail-section">
-        <h2>疑点</h2>
-        {% if job.concerns %}
-          <ul>{% for concern in job.concerns %}<li>{{ concern }}</li>{% endfor %}</ul>
-        {% else %}<p class="muted">未记录</p>{% endif %}
-      </section>
-
+      {% include 'evaluation_fields.html' %}
       <div class="original-link">
         <h2>原始职位 URL</h2>
         {% if job.detail_url %}

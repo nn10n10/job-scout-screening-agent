@@ -8,13 +8,14 @@ from fastapi.staticfiles import StaticFiles
 
 from .routes import router
 from .search_runs import SearchRunManager
+from .daily_runs import DailyRunManager
 
 
 WEB_HOST = "127.0.0.1"
 WEB_PORT = 8765
 
 
-def create_app(db_path: Path, *, search_runner=None) -> FastAPI:
+def create_app(db_path: Path, *, search_runner=None, daily_runner=None) -> FastAPI:
     app = FastAPI(
         title="Job Scout WebUI",
         openapi_url=None,
@@ -22,6 +23,7 @@ def create_app(db_path: Path, *, search_runner=None) -> FastAPI:
         redoc_url=None,
     )
     app.state.db_path = db_path
+    app.state.daily_runs = DailyRunManager(db_path, daily_runner)
     app.state.search_runs = SearchRunManager(search_runner)
     @app.middleware("http")
     async def private_headers(request, call_next):
