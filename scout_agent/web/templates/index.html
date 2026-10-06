@@ -75,6 +75,11 @@
           {% endfor %}
         </select>
       </label>
+      <fieldset class="status-filter"><legend>人工状态（仅本地标记）</legend>
+        <input type="hidden" name="status_present" value="1">
+        {% for status in status_options %}<label><input type="checkbox" name="status" value="{{ status }}" {% if status in filters.status %}checked{% endif %}>{{ status_labels[status] }}</label>{% endfor %}
+        <button type="button" id="all-statuses">全部</button>
+      </fieldset>
       <input type="hidden" name="page" value="1">
       <label class="field">每页条数<select name="page_size">
         {% for size in page_sizes %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}
@@ -120,12 +125,19 @@
             </div>
             <div class="card-footer">
               <div class="links">
-                <a class="detail-action" href="{{ url_for('job_detail', scout_id=card.scout_id) }}">筛选详情</a>
+                <span>{{ status_labels[states[card.scout_id]] }}</span>
+                <div class="state-actions" data-scout-id="{{ card.scout_id }}">
+                  {% for status in status_options if status != states[card.scout_id] %}<button type="button" data-status="{{ status }}">{{ '恢复未处理' if status == 'ACTIVE' else ('排除' if status == 'EXCLUDED' else '已投递') }}</button>{% endfor %}
+                </div>
                 {% if card.detail_url %}
                   <a href="{{ card.detail_url }}" target="_blank" rel="noopener noreferrer">查看职位 ↗</a>
                 {% endif %}
               </div>
             </div>
+            <details class="inline-detail">
+              <summary><span class="expand-label">展开详情</span><span class="collapse-label">收起详情</span></summary>
+              {% with job=details[card.scout_id] %}{% include 'evaluation_fields.html' %}{% endwith %}
+            </details>
           </article>
         {% endfor %}
       </section>
@@ -141,6 +153,8 @@
       {% if page < pages %}<a href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
     </nav>
   </main>
+  <p id="state-error" role="alert"></p>
+  <script src="{{ url_for('static', path='/scout_state.js') }}" defer></script>
   <script src="{{ url_for('static', path='/daily.js') }}" defer></script>
 </body>
 </html>

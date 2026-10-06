@@ -24,11 +24,15 @@ def index(
     request: Request, q: str = "", platform: str = "All",
     verdict: str = "KEEP,MAYBE", provider: str = "Final", days: str = "7",
     tier: str = "All", page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10),
+    page_size: int = Query(default=10), status: list[str] | None = Query(default=None),
 ) -> HTMLResponse:
+    from .services import STATUSES, STATUS_LABELS
+    if status is None and 'status_present' in request.query_params:
+        raise HTTPException(422, '请至少选择一个人工状态')
     try:
         filters = DashboardFilters(
             q=q, platform=platform, verdict=verdict, provider=provider, days=days, tier=tier,
+            status=tuple(status) if status is not None else ("ACTIVE",),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -43,7 +47,7 @@ def index(
     summary = summarize_evaluations(request.app.state.db_path, filters, now=now)
     pages = max(1, (summary.total + page_size - 1) // page_size)
     def page_url(number):
-        return '/?' + urlencode({**asdict(filters), 'page': number, 'page_size': page_size})
+        return '/?' + urlencode({**asdict(filters), 'page': number, 'page_size': page_size}, doseq=True)
     if page > pages:
         return RedirectResponse(page_url(pages), status_code=303, headers=PRIVATE_HEADERS)
     results = search_evaluations(request.app.state.db_path, filters, now=now,
@@ -53,6 +57,9 @@ def index(
         name="index.html",
         context={
             "cards": evaluation_cards(results), "filters": filters,
+            "details": {r.scout_id: evaluation_detail(r) for r in results},
+            "states": {r.scout_id: r.user_status for r in results},
+            "status_options": STATUSES, "status_labels": STATUS_LABELS,
             "summary": summary, "scope": dashboard_scope(filters),
             "platform_options": PLATFORMS, "verdict_options": VERDICTS,
             "provider_options": PROVIDERS, "day_options": DAY_RANGES,
@@ -200,3 +207,41 @@ def start_daily(request: Request):
 @router.get("/api/daily/status")
 def daily_status(request: Request):
     return request.app.state.daily_runs.snapshot()
+
+
+@router.post("/jobs/{scout_id}/state")
+async def set_scout_state(request: Request, scout_id: int):
+    from contextlib import closing
+    import secrets
+    import sqlite3
+    from fastapi.responses import JSONResponse
+    from .services import STATUSES
+    manager = request.app.state.daily_runs
+    if not secrets.compare_digest(request.headers.get('x-csrf-token', '').encode(), manager.csrf_token.encode()):
+        raise HTTPException(403, 'CSRF 校验失败')
+    try:
+        data = await request.json()
+    except ValueError:
+        raise HTTPException(422, '人工状态无效') from None
+    if not isinstance(data, dict) or set(data) != {'status'} or data['status'] not in STATUSES:
+        raise HTTPException(422, '人工状态无效')
+    with manager.lock:
+        if manager.state['state'] == 'running':
+            raise HTTPException(409, '正在筛选，请等待本轮完成')
+        path = request.app.state.db_path
+        if not path.is_file():
+            raise HTTPException(404, '职位不存在')
+        try:
+            with closing(sqlite3.connect(path)) as conn, conn:
+                if not conn.execute('SELECT 1 FROM evaluations WHERE scout_id=?', (scout_id,)).fetchone():
+                    raise HTTPException(404, '职位不存在')
+                conn.execute("""CREATE TABLE IF NOT EXISTS scout_user_states (
+                    scout_id INTEGER PRIMARY KEY REFERENCES scouts(id),
+                    status TEXT NOT NULL CHECK(status IN ('ACTIVE','APPLIED','EXCLUDED')),
+                    updated_at TEXT NOT NULL)""")
+                conn.execute("""INSERT INTO scout_user_states VALUES (?,?,?)
+                    ON CONFLICT(scout_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at""",
+                    (scout_id, data['status'], datetime.now().isoformat()))
+        except sqlite3.Error:
+            raise HTTPException(409, '本地状态暂时无法保存，请稍后重试') from None
+    return JSONResponse({'status': data['status']}, headers=PRIVATE_HEADERS)

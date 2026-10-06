@@ -90,8 +90,9 @@ def test_web_default_shows_recent_keep_maybe_not_skip_and_stays_read_only(tmp_pa
     assert "虚构Cloud Engineer岗位" in html
     assert "收到：" in html and "平台：type" in html and "分类：codex" in html
     assert "工作方式待确认。" in html and "薪资范围待确认。" in html
-    assert "第三项仅在详情页。" not in html
-    assert f'href="http://testserver/jobs/{ids["infra"]}"' in html
+    assert "第三项仅在详情页。" in html  # Available inside closed inline details.
+    assert f'href="http://testserver/jobs/{ids["infra"]}"' not in html
+    assert '<details class="inline-detail">' in html
     assert 'href="https://example.invalid/job?x=1&amp;y=2"' in html
     assert 'target="_blank"' in html and 'rel="noopener noreferrer"' in html
     assert "&lt;script&gt;架空社&lt;/script&gt;" in html

@@ -225,3 +225,12 @@ a:hover, a:focus-visible { text-decoration: underline; }
 #daily-status { color: #607087; font-size: .8rem; }
 @media (max-width: 800px) { .scout-row { grid-template-columns: 1fr; gap: 6px; } }
 .scout-row .card-tertiary { margin-bottom: 0; }
+.inline-detail { grid-column: 1 / -1; font-size: .85rem; }
+.inline-detail summary { cursor: pointer; font-weight: 650; }
+.inline-detail .collapse-label, .inline-detail[open] .expand-label { display: none; }
+.inline-detail[open] .collapse-label { display: inline; }
+.inline-detail .detail-section { margin: 12px 0; }
+.inline-detail .detail-section h2 { font-size: .9rem; }
+.state-actions { display: flex; gap: 4px; }
+.state-actions button, #all-statuses { padding: 3px 7px; font-size: .75rem; }
+.status-filter { display: flex; flex-wrap: wrap; gap: 8px; font-size: .8rem; }

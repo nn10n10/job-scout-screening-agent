@@ -22,6 +22,8 @@ DAY_RANGES = ("1", "7", "14", "30", "all")
 TIER_OPTIONS = ("All", "S", "A", "B", "C")
 RESULT_LIMIT = 100
 PAGE_SIZES = (10, 20, 50, 100)
+STATUSES = ("ACTIVE", "APPLIED", "EXCLUDED")
+STATUS_LABELS = dict(zip(STATUSES, ("未处理", "已投递", "已排除")))
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class DashboardFilters:
     provider: str = "Final"
     days: str = "7"
     tier: str = "All"
+    status: tuple[str, ...] = ("ACTIVE",)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "q", self.q.strip())
@@ -39,6 +42,8 @@ class DashboardFilters:
             object.__setattr__(self, "provider", self.provider.title())
         if self.days.lower() == "all":
             object.__setattr__(self, "days", "all")
+        if not self.status or any(value not in STATUSES for value in self.status):
+            raise ValueError("人工状态无效")
         if len(self.q) > 200:
             raise ValueError("keyword is too long")
         if self.platform not in PLATFORMS or self.verdict not in VERDICTS \
@@ -62,6 +67,7 @@ class StoredEvaluation:
     evaluated_at: datetime
     received_date: str | None
     priority: PriorityAssessment | None
+    user_status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -106,8 +112,20 @@ _RESULT_COLUMNS = (
 )
 
 
+def _state_expression(db: Database) -> str:
+    exists = db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scout_user_states'").fetchone()
+    return ("COALESCE((SELECT status FROM scout_user_states WHERE scout_id=s.id),'ACTIVE')"
+            if exists else "'ACTIVE'")
+
+
+def _state_scope(db: Database, filters: DashboardFilters) -> tuple[str, str]:
+    expression = _state_expression(db)
+    return expression, f" AND {expression} IN ({','.join('?' for _ in filters.status)})"
+
+
 def _from_row(row: Any) -> StoredEvaluation:
     return StoredEvaluation(
+        user_status=row["user_status"] if "user_status" in row.keys() else "ACTIVE",
         scout_id=int(row["scout_id"]), platform=row["platform"],
         company=row["company"], job_title=row["job_title"],
         salary=row["salary"], location=row["location"], url=row["url"],
@@ -241,15 +259,16 @@ def search_evaluations(
         "WHEN 'S' THEN 0 WHEN 'A' THEN 1 WHEN 'B' THEN 2 WHEN 'C' THEN 3 ELSE 4 END,"
         if filters.provider == "Final" else ""
     )
-    sql = (
-        f"{_RESULT_COLUMNS} WHERE {where} "
-        f"ORDER BY {tier_sort}{_RECEIVED_DATE} DESC,"
-        "COALESCE(e.evaluated_at,e.created_at) DESC,e.id DESC LIMIT ? OFFSET ?"
-    )
-    params.extend((page_size, (page - 1) * page_size))
     with Database(db_path, read_only=True) as db:
         _register_readonly_functions(db)
-        rows = db.conn.execute(sql, params).fetchall()
+        expression, state_where = _state_scope(db, filters)
+        columns = _RESULT_COLUMNS.replace("SELECT ", f"SELECT {expression} AS user_status,", 1)
+        sql = (
+            f"{columns} WHERE {where}{state_where} "
+            f"ORDER BY {tier_sort}{_RECEIVED_DATE} DESC,"
+            "COALESCE(e.evaluated_at,e.created_at) DESC,e.id DESC LIMIT ? OFFSET ?"
+        )
+        rows = db.conn.execute(sql, params + list(filters.status) + [page_size, (page - 1) * page_size]).fetchall()
     return [_from_row(row) for row in rows]
 
 
@@ -260,18 +279,19 @@ def summarize_evaluations(
     if not db_path.is_file():
         return DashboardSummary(0, 0, 0, 0, ())
     where, params = _where_clause(filters, now)
-    sql = (
-        "SELECT s.platform,COUNT(*) AS total,"
-        "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='KEEP' THEN 1 ELSE 0 END) AS keep_count,"
-        "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='MAYBE' THEN 1 ELSE 0 END) AS maybe_count,"
-        "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='SKIP' THEN 1 ELSE 0 END) AS skip_count "
-        "FROM evaluations e JOIN scouts s ON s.id=e.scout_id "
-        "LEFT JOIN doda_list_items d ON s.platform='doda' AND d.external_id=s.external_id "
-        f"WHERE {where} GROUP BY s.platform ORDER BY total DESC,s.platform"
-    )
     with Database(db_path, read_only=True) as db:
         _register_readonly_functions(db)
-        rows = db.conn.execute(sql, params).fetchall()
+        _, state_where = _state_scope(db, filters)
+        sql = (
+            "SELECT s.platform,COUNT(*) AS total,"
+            "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='KEEP' THEN 1 ELSE 0 END) AS keep_count,"
+            "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='MAYBE' THEN 1 ELSE 0 END) AS maybe_count,"
+            "SUM(CASE WHEN json_extract(e.payload,'$.verdict')='SKIP' THEN 1 ELSE 0 END) AS skip_count "
+            "FROM evaluations e JOIN scouts s ON s.id=e.scout_id "
+            "LEFT JOIN doda_list_items d ON s.platform='doda' AND d.external_id=s.external_id "
+            f"WHERE {where}{state_where} GROUP BY s.platform ORDER BY total DESC,s.platform"
+        )
+        rows = db.conn.execute(sql, params + list(filters.status)).fetchall()
     return DashboardSummary(
         total=sum(row["total"] for row in rows),
         keep=sum(row["keep_count"] for row in rows),
