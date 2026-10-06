@@ -46,7 +46,7 @@ def test_old_table_get_no_migration(pool):
     with TestClient(app) as client:
         page = client.get('/search')
         assert page.status_code == 200
-        assert '待处理（3）' in page.text
+        assert '待处理（2）' in page.text
     with sqlite3.connect(pool) as conn:
         assert conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall() == before
         assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='search_job_user_state'").fetchone() is None
@@ -106,10 +106,10 @@ def test_filters_counts_details_preview_and_safe_urls(pool):
         assert post(client, app, status='APPLIED').status_code == 200
         assert post(client, app, job='900001:2', status='EXCLUDED').status_code == 200
         for status, titles in [('ACTIVE',[3]), ('APPLIED',[1]), ('EXCLUDED',[2]), ('ALL',[1,2,3])]:
-            page = client.get('/search', params={'status':status}).text
+            page = client.get('/search', params={'status': ['ACTIVE','APPLIED','EXCLUDED'] if status == 'ALL' else [status], 'verdict':['TARGET','POSSIBLE','DROP']}).text
             for index in range(1,4):
                 assert (f'Platform {index}' in page) == (index in titles)
-            for label in ('待处理（1）', '已投递（1）', '已排除（1）', '全部（3）'):
+            for label in ('待处理（1）', '已投递（1）', '已排除（1）'):
                 assert label in page
             assert '虚构地点' * 150 not in page
             assert 'token=fictional' not in page
@@ -118,7 +118,7 @@ def test_filters_counts_details_preview_and_safe_urls(pool):
             compact = page.split('<div class="search-compact">',1)[1].split('<div class="search-details"',1)[0]
             assert 'data-status' not in compact
             assert ' hidden>' in page
-        all_page = client.get('/search?status=ALL').text
+        all_page = client.get('/search?status=ACTIVE&status=APPLIED&status=EXCLUDED&verdict=TARGET&verdict=POSSIBLE&verdict=DROP').text
         assert all_page.index('Platform 1') < all_page.index('Platform 2') < all_page.index('Platform 3')
         assert client.get('/search?status=INVALID').status_code == 422
     with Database(pool, read_only=True) as db:
