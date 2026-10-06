@@ -26,12 +26,13 @@
 {% elif name == 'verdict' %}<button type="button" data-filter-preset="recommended">推荐</button><button type="button" data-filter-preset="all">全部</button>
 {% else %}<button type="button" data-filter-preset="all">全部平台</button>{% endif %}
 </fieldset>{% endfor %}
+<label>每页 <select name="page_size">{% for size in [10, 20, 50] %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select> 条</label>
 <button type="submit">应用筛选</button>
 </form>
 <p>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页</p>
 <nav class="state-filters" aria-label="候选池分页">
-{% if page > 1 %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page - 1) }}">上一页</a>{% endif %}
-{% if page < pages %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page + 1) }}">下一页</a>{% endif %}
+{% if page > 1 %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page - 1, page_size) }}">上一页</a>{% endif %}
+{% if page < pages %}<a href="{{ pool_url(selected_status, selected_verdict, selected_platform, page + 1, page_size) }}">下一页</a>{% endif %}
 </nav>
 <p>人工状态仅保存到本地，不会向招聘平台投递、拒绝或收藏。</p>
 <section class="search-list">

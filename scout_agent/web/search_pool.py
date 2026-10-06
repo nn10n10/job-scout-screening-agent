@@ -7,14 +7,16 @@ from scout_agent.storage.db import Database
 STATUSES = ('ACTIVE', 'APPLIED', 'EXCLUDED')
 VERDICTS = ('TARGET', 'POSSIBLE', 'DROP')
 PLATFORMS = ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi')
-PAGE_SIZE = 20
+PAGE_SIZES = (10, 20, 50)
 
 
-def pool_url(status, verdict, platform, page=1):
-    return '/search?' + urlencode(dict(status=status, verdict=verdict, platform=platform, page=page), doseq=True)
+def pool_url(status, verdict, platform, page=1, page_size=10):
+    return '/search?' + urlencode(dict(status=status, verdict=verdict, platform=platform, page=page, page_size=page_size), doseq=True)
 
 
-def query_pool(path, status, verdict, platform, page):
+def query_pool(path, status, verdict, platform, page, page_size=10):
+    if page_size not in PAGE_SIZES:
+        raise ValueError("Invalid pool page size")
     results, states, seen = [], {}, {}
     if path.is_file():
         with Database(path, read_only=True) as db:
@@ -44,10 +46,10 @@ def query_pool(path, status, verdict, platform, page):
     rows.sort(key=lambda item: seen.get(item[0].job_id) or '', reverse=True)
     rows.sort(key=lambda item: {'TARGET': 0, 'POSSIBLE': 1, 'DROP': 2}[item[1].verdict])
     total = len(rows)
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    pages = max(1, (total + page_size - 1) // page_size)
     current = min(page, pages)
-    return dict(results=rows[(current - 1) * PAGE_SIZE:current * PAGE_SIZE], states=states,
-                facets=counts, total=total, page=current, pages=pages)
+    return dict(results=rows[(current - 1) * page_size:current * page_size], states=states,
+                facets=counts, total=total, page=current, pages=pages, page_size=page_size)
 
 
 def source_label(platform, source):

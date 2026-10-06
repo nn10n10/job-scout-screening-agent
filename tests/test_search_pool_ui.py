@@ -59,7 +59,7 @@ def test_facets_and_combinations(pool):
             for platform in (PLATFORMS, ('green',), ('forkwell',), ('doda',), ('green','forkwell')):
                 data = query_pool(pool, status, verdict, platform, 1)
                 assert data['total'] == sum(match(row, status, verdict, platform) for row in rows)
-                assert len(data['results']) == min(data['total'], 20)
+                assert len(data['results']) == min(data['total'], 10)
                 for key, counts in data['facets'].items():
                     for value, count in counts.items():
                         dims = dict(status=status, verdict=verdict, platform=platform)
@@ -70,7 +70,7 @@ def test_facets_and_combinations(pool):
 def test_sort_pagination_and_legacy(pool):
     all_rows = []
     for page in range(1, 5):
-        data = query_pool(pool, STATUSES, VERDICTS, PLATFORMS, page)
+        data = query_pool(pool, STATUSES, VERDICTS, PLATFORMS, page, 20)
         assert len(data['results']) == (20 if page < 4 else 3)
         all_rows.extend(data['results'])
     with sqlite3.connect(pool) as conn:
@@ -92,14 +92,14 @@ def test_http_filters_links_dom_and_boundaries(pool):
     app = create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))
     with TestClient(app) as client:
         html = client.get('/search').text
-        assert html.count('<article class="search-row">') == 20
+        assert html.count('<article class="search-row">') == 10
         default = query_pool(pool, ('ACTIVE',), ('TARGET','POSSIBLE'), PLATFORMS, 1)
         assert f'共 {default["total"]} 条' in html
         for params in ({'status':'bad'}, {'verdict':'bad'}, {'platform':'bad'}, {'page':0}, {'page':-1}, {'page':'bad'}, {'page':'1.5'}, {'page':'1.0'}, {'page':'+1'}, {'page':' 1 '}):
             assert client.get('/search', params=params).status_code == 422
         response = client.get(pool_url(STATUSES, VERDICTS, PLATFORMS, 999), follow_redirects=False)
         assert response.status_code == 303
-        assert parse_qs(urlsplit(response.headers['location']).query)['page'] == ['4']
+        assert parse_qs(urlsplit(response.headers['location']).query)['page'] == ['7']
         html = client.get('/search?status=APPLIED&verdict=TARGET&platform=green').text
         assert '<form action="/search" method="get"' in html
         assert 'name="page" value="1"' in html
@@ -139,8 +139,8 @@ def test_state_change_reload_normalizes_last_page(pool):
                     if store.user_states().get(job.job_id, 'ACTIVE') == 'ACTIVE']
             for job in jobs[:8]:
                 store.set_user_state(job.job_id, 'APPLIED')
-        url = pool_url(('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2)
-        data = query_pool(pool, ('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2)
+        url = pool_url(('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2, 20)
+        data = query_pool(pool, ('APPLIED','EXCLUDED'), VERDICTS, PLATFORMS, 2, 20)
         assert data['total'] == 21 and len(data['results']) == 1
         job_id = data['results'][0][0].job_id
         assert client.get(url).text.count('<article class="search-row">') == 1
@@ -150,7 +150,7 @@ def test_state_change_reload_normalizes_last_page(pool):
         reloaded = client.get(url, follow_redirects=False)
         assert reloaded.status_code == 303
         assert parse_qs(urlsplit(reloaded.headers['location']).query) == {
-            'status':['APPLIED','EXCLUDED'], 'verdict':list(VERDICTS), 'platform':list(PLATFORMS), 'page':['1']}
+            'status':['APPLIED','EXCLUDED'], 'verdict':list(VERDICTS), 'platform':list(PLATFORMS), 'page':['1'], 'page_size':['20']}
         for platform in ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi'):
             assert client.get('/search', params={'platform':platform}).status_code == 200
 
@@ -189,6 +189,8 @@ class PoolForm(HTMLParser):
         self.inputs = []
         self.presets = []
         self.submit = None
+        self.select_name = None
+        self.options = []
         self.feed(html)
 
     def handle_starttag(self, tag, attrs):
@@ -201,6 +203,12 @@ class PoolForm(HTMLParser):
             return
         if tag == 'fieldset':
             self.dimension = attrs['data-filter-dimension']
+        elif tag == 'select':
+            self.select_name = attrs['name']
+        elif tag == 'option':
+            self.options.append(attrs)
+            if 'selected' in attrs:
+                self.inputs.append(dict(name=self.select_name, value=attrs['value'], type='select', checked=''))
         elif tag == 'input':
             self.inputs.append(attrs)
         elif tag == 'button' and 'data-filter-preset' in attrs:
@@ -217,9 +225,10 @@ class PoolForm(HTMLParser):
             self.dimension = None
 
 
-def test_local_presets_and_apply_repeated_query(pool):
+@pytest.mark.parametrize('size', [10, 20, 50])
+def test_local_presets_and_apply_repeated_query(pool, size):
     with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
-        html = client.get('/search?status=APPLIED&verdict=DROP&platform=green').text
+        html = client.get(f'/search?status=APPLIED&verdict=DROP&platform=green&page_size={size}').text
         form = PoolForm(html)
         assert form.form['action'] == '/search' and form.form['method'] == 'get'
         assert form.submit is not None
@@ -280,7 +289,7 @@ console.log(query.toString());
         assert result.returncode == 0, result.stderr
         query = parse_qs(result.stdout.strip())
         assert query == dict(status=list(STATUSES), verdict=list(VERDICTS), platform=list(PLATFORMS),
-                            page=['1'], status_present=['1'], verdict_present=['1'], platform_present=['1'])
+                            page=['1'], status_present=['1'], verdict_present=['1'], platform_present=['1'], page_size=[str(size)])
         response = client.get('/search?' + result.stdout.strip())
         assert response.status_code == 200
         assert '共 63 条' in response.text
@@ -289,11 +298,67 @@ console.log(query.toString());
         manual = {'status': ('ACTIVE', 'APPLIED'), 'verdict': ('POSSIBLE', 'DROP'),
                   'platform': ('green', 'forkwell')}
         query = urlencode([(item['name'], item['value']) for item in form.inputs
-                           if item['type'] == 'hidden' or item['value'] in manual[item['name']]])
+                           if item['type'] in ('hidden', 'select') or item['value'] in manual[item['name']]])
         response = client.get(form.form['action'] + '?' + query)
         assert response.status_code == 200
         expected = query_pool(pool, manual['status'], manual['verdict'], manual['platform'], 1)
         assert f'共 {expected["total"]} 条' in response.text
+        assert f'value="{size}" selected' in response.text
         for name, values in manual.items():
             for value in values:
                 assert f'name="{name}" value="{value}" checked' in response.text
+
+
+@pytest.mark.parametrize('size,pages,last_count', [(10, 7, 3), (20, 4, 3), (50, 2, 13)])
+def test_page_sizes_and_preserved_urls(pool, size, pages, last_count):
+    with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
+        url = pool_url(STATUSES, VERDICTS, PLATFORMS, 1, size)
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.text.count('<article class="search-row">') == size
+        assert f'第 1 / {pages} 页' in response.text
+        form = PoolForm(response.text)
+        assert [option['value'] for option in form.options] == ['10', '20', '50']
+        assert [option['value'] for option in form.options if 'selected' in option] == [str(size)]
+        assert any(item['name'] == 'page' and item['value'] == '1' for item in form.inputs)
+        links = re.findall(r'<a href="([^"]*)">(?:上一页|下一页)</a>', response.text)
+        assert links
+        for link in links:
+            assert parse_qs(urlsplit(link.replace('&amp;', '&')).query)['page_size'] == [str(size)]
+        redirected = client.get(pool_url(STATUSES, VERDICTS, PLATFORMS, 999, size), follow_redirects=False)
+        assert redirected.status_code == 303
+        query = parse_qs(urlsplit(redirected.headers['location']).query)
+        assert query['page_size'] == [str(size)] and query['page'] == [str(pages)]
+        last_html = client.get(redirected.headers['location']).text
+        assert last_html.count('<article class="search-row">') == last_count
+        last_form = PoolForm(last_html)
+        assert any(item['name'] == 'page' and item['value'] == '1' for item in last_form.inputs)
+        previous = re.search(r'<a href="([^"]*)">上一页</a>', last_html)[1]
+        previous_query = parse_qs(urlsplit(previous.replace('&amp;', '&')).query)
+        assert previous_query['page_size'] == [str(size)]
+        assert previous_query['page'] == [str(pages - 1)]
+        data = query_pool(pool, STATUSES, VERDICTS, PLATFORMS, 1, size)
+        assert data['facets'] == query_pool(pool, STATUSES, VERDICTS, PLATFORMS, 1)['facets']
+
+
+@pytest.mark.parametrize('size', ['0', '9', '11', '100', 'invalid', '', '10.0', '+10', ' 10 ', '010'])
+def test_invalid_page_size(pool, size):
+    with TestClient(create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))) as client:
+        assert client.get('/search', params={'page_size': size}).status_code == 422
+
+
+@pytest.mark.parametrize('size', [10, 20, 50])
+def test_state_reload_keeps_page_size(pool, size):
+    app = create_app(pool, search_runner=lambda *args: pytest.fail('no runner'))
+    with TestClient(app) as client:
+        url = pool_url(('ACTIVE',), ('TARGET', 'POSSIBLE'), ('green',), 1, size)
+        html = client.get(url).text
+        assert 'if (response.ok) { location.reload(); return; }' in html
+        data = query_pool(pool, ('ACTIVE',), ('TARGET', 'POSSIBLE'), ('green',), 1, size)
+        job_id = data['results'][0][0].job_id
+        assert client.post(f'/search/jobs/{job_id}/state', json={'status': 'APPLIED'},
+                           headers={'X-CSRF-Token': app.state.search_runs.csrf_token}).status_code == 200
+        reloaded = client.get(url)
+        assert str(reloaded.url) == 'http://testserver' + url
+        assert f'value="{size}" selected' in reloaded.text
+        assert reloaded.text.count('<article class="search-row">') == min(size, data['total'] - 1)

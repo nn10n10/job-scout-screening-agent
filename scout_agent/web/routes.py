@@ -66,8 +66,9 @@ def search_pool(
     request: Request, status: list[str] | None = Query(default=None),
     verdict: list[str] | None = Query(default=None),
     platform: list[str] | None = Query(default=None), page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10),
 ):
-    from .search_pool import STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
+    from .search_pool import PAGE_SIZES, STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
     from .viewmodels import search_cards
     from .search_runs import KEYWORDS, LIMITS
     def selection(name, values, allowed, default):
@@ -85,9 +86,11 @@ def search_pool(
     raw_page = request.query_params.get('page', '1')
     if not raw_page.isascii() or not raw_page.isdecimal():
         raise HTTPException(422, '页码必须为正整数')
-    pool = query_pool(request.app.state.db_path, status, verdict, platform, page)
+    if request.query_params.get("page_size", "10") not in {str(size) for size in PAGE_SIZES}:
+        raise HTTPException(422, "每页条数必须为 10、20 或 50")
+    pool = query_pool(request.app.state.db_path, status, verdict, platform, page, page_size)
     if page != pool['page']:
-        return RedirectResponse(pool_url(status, verdict, platform, pool['page']), status_code=303,
+        return RedirectResponse(pool_url(status, verdict, platform, pool['page'], page_size), status_code=303,
                                 headers=PRIVATE_HEADERS)
     return templates.TemplateResponse(request=request, name="search.html", context={
         **pool, "counts": pool['facets']['status'], "selected_status": status,
