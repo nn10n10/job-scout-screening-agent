@@ -214,7 +214,7 @@ def test_web_date_filter_and_limit_apply_in_sql(tmp_path):
     with TestClient(create_app(db_path)) as client:
         assert "Cloud Engineer" in client.get("/").text
         assert "Skip 100" not in client.get("/").text
-        all_results = client.get("/?verdict=All&days=all")
+        all_results = client.get("/?verdict=All&days=all&page_size=100")
         assert "显示 100 条" in all_results.text
         assert "Cloud Engineer" in all_results.text
         assert '<strong id="summary-total">105</strong>' in all_results.text

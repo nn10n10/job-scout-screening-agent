@@ -12,8 +12,12 @@
     <header class="page-header">
       <p class="eyebrow">JOB SCOUT · READ-ONLY</p>
       <h1>职位评价 Dashboard</h1>
-      <p class="intro">仅展示本地 SQLite 中已有的结果；这里不会扫描网站或运行分类模型。</p>
+      <p class="intro">浏览本地结果，或手动运行标准 Scout daily；招聘网站操作严格只读。</p>
     </header>
+    <section aria-label="Scout daily">
+      <button id="daily-run" data-csrf="{{ daily_csrf_token }}">▶ 立即运行 Scout 筛选</button>
+      <p id="daily-status" role="status" aria-live="polite">正在获取运行状态…</p>
+    </section>
 
     <section class="dashboard-summary" aria-label="当前筛选摘要">
       <p class="active-filters">
@@ -71,6 +75,10 @@
           {% endfor %}
         </select>
       </label>
+      <input type="hidden" name="page" value="1">
+      <label class="field">每页条数<select name="page_size">
+        {% for size in page_sizes %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+      </select></label>
       <div class="filter-actions">
         <button type="submit">筛选</button>
         <a href="/">重置</a>
@@ -78,10 +86,10 @@
     </form>
 
     {% if cards %}
-      <p class="count">显示 {{ cards|length }} 条评价 · {{ '按 Tier S→A→B→C，同档按收到时间从新到旧' if filters.provider == 'Final' else '按收到时间从新到旧' }} · 最多 100 条</p>
-      <section class="cards" aria-label="职位评价">
+      <p class="count">显示 {{ cards|length }} 条评价 · {{ '按 Tier S→A→B→C，同档按收到时间从新到旧' if filters.provider == 'Final' else '按收到时间从新到旧' }}</p>
+      <section class="scout-list" aria-label="职位评价">
         {% for card in cards %}
-          <article class="card card-{{ card.verdict|lower }}">
+          <article class="scout-row card-{{ card.verdict|lower }}">
             <div class="card-primary">
               <div class="card-top">
                 <span class="verdict verdict-{{ card.verdict|lower }}">{{ card.verdict }}</span>
@@ -97,9 +105,9 @@
               <span>远程：{{ card.remote_evidence or '不明' }}</span>
               <span>年休：{{ card.annual_holidays ~ '日' if card.annual_holidays is not none else '不明' }}</span>
               <span>平台：{{ card.platform }}</span>
-              <span>分类：{{ card.provider }}</span>
+              <span class="audit-info">分类：{{ card.provider }}</span>
               <span>收到：{{ card.received_date or '未确认' }}</span>
-              <span class="evaluation-time">评价：{{ card.evaluated_at }}</span>
+
             </div>
             <div class="card-tertiary">
               <p class="summary">{{ card.summary }}</p>
@@ -127,6 +135,12 @@
         <p>可调整筛选条件；如果数据库尚为空，完成一次扫描后结果会显示在这里。</p>
       </section>
     {% endif %}
+    <nav class="pagination" aria-label="结果分页">
+      <span>共 {{ summary.total }} 条 · 第 {{ page }} / {{ pages }} 页</span>
+      {% if page > 1 %}<a href="{{ page_url(page - 1) }}">上一页</a>{% endif %}
+      {% if page < pages %}<a href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
+    </nav>
   </main>
+  <script src="{{ url_for('static', path='/daily.js') }}" defer></script>
 </body>
 </html>

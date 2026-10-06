@@ -21,6 +21,7 @@ PROVIDERS = ("Final", "codex", "local", "mock", "All")
 DAY_RANGES = ("1", "7", "14", "30", "all")
 TIER_OPTIONS = ("All", "S", "A", "B", "C")
 RESULT_LIMIT = 100
+PAGE_SIZES = (10, 20, 50, 100)
 
 
 @dataclass(frozen=True)
@@ -227,8 +228,11 @@ def _where_clause(filters: DashboardFilters, now: datetime | None) -> tuple[str,
 
 def search_evaluations(
     db_path: Path, filters: DashboardFilters, *, now: datetime | None = None,
+    page: int = 1, page_size: int = RESULT_LIMIT,
 ) -> list[StoredEvaluation]:
-    """Apply every filter and the 100-row limit in parameterized SQLite SQL."""
+    """Apply filters and pagination in SQL."""
+    if page < 1 or page_size not in PAGE_SIZES:
+        raise ValueError("invalid pagination")
     if not db_path.is_file():
         return []
     where, params = _where_clause(filters, now)
@@ -240,9 +244,9 @@ def search_evaluations(
     sql = (
         f"{_RESULT_COLUMNS} WHERE {where} "
         f"ORDER BY {tier_sort}{_RECEIVED_DATE} DESC,"
-        "COALESCE(e.evaluated_at,e.created_at) DESC,e.id DESC LIMIT ?"
+        "COALESCE(e.evaluated_at,e.created_at) DESC,e.id DESC LIMIT ? OFFSET ?"
     )
-    params.append(RESULT_LIMIT)
+    params.extend((page_size, (page - 1) * page_size))
     with Database(db_path, read_only=True) as db:
         _register_readonly_functions(db)
         rows = db.conn.execute(sql, params).fetchall()

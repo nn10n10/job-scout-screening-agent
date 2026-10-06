@@ -23,7 +23,8 @@ PRIVATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"
 def index(
     request: Request, q: str = "", platform: str = "All",
     verdict: str = "KEEP,MAYBE", provider: str = "Final", days: str = "7",
-    tier: str = "All",
+    tier: str = "All", page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10),
 ) -> HTMLResponse:
     try:
         filters = DashboardFilters(
@@ -32,8 +33,21 @@ def index(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     now = datetime.now()
-    results = search_evaluations(request.app.state.db_path, filters, now=now)
+    from dataclasses import asdict
+    from urllib.parse import urlencode
+    from .services import PAGE_SIZES
+    if (not request.query_params.get('page', '1').isascii()
+            or not request.query_params.get('page', '1').isdecimal()
+            or request.query_params.get('page_size', '10') not in {str(n) for n in PAGE_SIZES}):
+        raise HTTPException(422, '分页参数无效')
     summary = summarize_evaluations(request.app.state.db_path, filters, now=now)
+    pages = max(1, (summary.total + page_size - 1) // page_size)
+    def page_url(number):
+        return '/?' + urlencode({**asdict(filters), 'page': number, 'page_size': page_size})
+    if page > pages:
+        return RedirectResponse(page_url(pages), status_code=303, headers=PRIVATE_HEADERS)
+    results = search_evaluations(request.app.state.db_path, filters, now=now,
+                                 page=page, page_size=page_size)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -42,7 +56,9 @@ def index(
             "summary": summary, "scope": dashboard_scope(filters),
             "platform_options": PLATFORMS, "verdict_options": VERDICTS,
             "provider_options": PROVIDERS, "day_options": DAY_RANGES,
-            "tier_options": TIER_OPTIONS,
+            "tier_options": TIER_OPTIONS, "page": page, "pages": pages,
+            "page_size": page_size, "page_sizes": PAGE_SIZES, "page_url": page_url,
+            "daily_csrf_token": request.app.state.daily_runs.csrf_token,
         },
         headers=PRIVATE_HEADERS,
     )
@@ -167,3 +183,20 @@ async def set_search_job_state(request: Request, job_id: str):
         finally:
             conn.close()
     return JSONResponse({'status': data['status']}, headers=PRIVATE_HEADERS)
+
+
+@router.post("/api/daily/run")
+def start_daily(request: Request):
+    import secrets
+    from fastapi.responses import JSONResponse
+    manager = request.app.state.daily_runs
+    if not secrets.compare_digest(request.headers.get('x-csrf-token', '').encode(), manager.csrf_token.encode()):
+        raise HTTPException(403, 'CSRF 校验失败')
+    if not manager.start():
+        raise HTTPException(409, '正在筛选，请等待本轮完成')
+    return JSONResponse(manager.snapshot(), status_code=202, headers=PRIVATE_HEADERS)
+
+
+@router.get("/api/daily/status")
+def daily_status(request: Request):
+    return request.app.state.daily_runs.snapshot()

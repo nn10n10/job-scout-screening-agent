@@ -107,7 +107,7 @@ def _finalize_evaluation(evaluation, scout: Scout):
 
 def main(
     argv: list[str] | None = None, *,
-    _daily_mode: bool = False, _daily_capture: dict | None = None,
+    _daily_mode: bool = False, _daily_capture: dict | None = None, _settings=None,
 ) -> int:
     parser = argparse.ArgumentParser(description="READ-ONLY local Job Scout screening agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -161,7 +161,7 @@ def main(
             print("Green 搜索安全停止：请检查 CDP、来源页面与 h1 / 仕事内容；DOM 变化需更新解析器。", file=sys.stderr)
             return 1
     _load_runtime()
-    settings = load_settings()
+    settings = _settings or load_settings()
 
     if args.command == "web":
         from scout_agent.web.app import run_web
@@ -176,7 +176,7 @@ def main(
             settings, dry_run=args.dry_run,
             scan_platform=lambda platform, capture: main(
                 ["scan", "--platform", platform],
-                _daily_mode=True, _daily_capture=capture,
+                _daily_mode=True, _daily_capture=capture, _settings=settings,
             ),
             classifier_factory=_classifier,
             finalize_evaluation=_finalize_evaluation,
