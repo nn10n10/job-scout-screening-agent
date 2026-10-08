@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from js_test_utils import require_node
+
 from scout_agent.forkwell_discovery import ForkwellSearchAdapter, job_from_url, parse_fields
 from scout_agent.green_discovery import GreenSearchDOMPending
 from scout_agent.search import search_command
@@ -168,12 +170,10 @@ def test_malformed_snapshot_fails_closed():
 def fictional_detail(nodes):
     """Execute the actual DETAIL JS against a fictional, browser-free DOM double."""
     import json
-    import shutil
     import subprocess
     from scout_agent.forkwell_discovery import DETAIL
 
-    node = shutil.which('node')
-    assert node, 'Node is required to verify the actual detail extraction script'
+    node = require_node()
     script = r'''
 const nodes = INPUT.map(([tag, text, shown = true]) => ({
   tag, textContent: text, innerText: text, shown,

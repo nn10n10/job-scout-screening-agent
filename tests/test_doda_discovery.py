@@ -4,6 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from js_test_utils import require_node
+
 from scout_agent.platform_discovery import (
     DODA_DETAIL_PATTERN, DODA_LIST_PATTERN, DODA_PAGE_PATTERN, SNAPSHOT,
     collect, evidence,
@@ -149,7 +151,7 @@ global.document = {querySelector: selector => selector === 'link[rel="canonical"
   (fixture.has_node ? {textContent: fixture.payload} : null)};
 process.stdout.write(JSON.stringify((''' + STRUCTURE + ''')()));
 '''
-    result = subprocess.run(['node', '-e', script], input=json.dumps(dict(
+    result = subprocess.run([require_node(), '-e', script], input=json.dumps(dict(
         url=url, canonical=canonical, payload=payload, has_node=has_node)),
         capture_output=True, text=True, check=True)
     return json.loads(result.stdout)

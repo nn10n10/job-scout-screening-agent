@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from js_test_utils import require_node
+
 from scout_agent.findy_search import FindySearchAdapter, job_from_url, parse_fields
 from scout_agent.green_discovery import GreenSearchDOMPending
 from scout_agent.search import search_command
@@ -198,7 +200,6 @@ def test_cli_findy_source_without_running_search(monkeypatch):
 def semantic_dom(nodes, og='', title=''):
     """Execute the production JS with fictional elements, never a browser."""
     import json
-    import shutil
     import subprocess
     from scout_agent.findy_search import DETAIL
     script = """
@@ -222,7 +223,7 @@ global.document={title:fixture.title,
  (fixture.og ? [{getAttribute:()=>fixture.og}] : []) : flatten(nodes).filter(n=>n.matches(s))},
  get body(){throw Error('Forbidden body access')}};
 """.replace('FIXTURE', json.dumps(dict(nodes=nodes, og=og, title=title)))
-    result = subprocess.run([shutil.which('node'), '-e', script +
+    result = subprocess.run([require_node(), '-e', script +
         '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

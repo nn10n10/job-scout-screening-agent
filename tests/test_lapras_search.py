@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from js_test_utils import require_node
+
 from scout_agent.lapras_search import LaprasSearchAdapter, job_from_url, parse_fields
 from scout_agent.green_discovery import GreenSearchDOMPending
 from scout_agent.search import search_command
@@ -248,7 +250,7 @@ def test_slug_links_never_become_identity():
 
 
 def test_actual_semantic_script_and_allowlist():
-    import json, subprocess, shutil
+    import json, subprocess
     from scout_agent.lapras_search import DETAIL
     prefix = """
 const nodes = [['h1','Fictional SRE'],['h2','業務内容'],['p','架空基盤の運用'],
@@ -260,7 +262,7 @@ nodes.forEach((n,i)=>n.nextElementSibling=nodes[i+1]||null);
 global.getComputedStyle=()=>({visibility:'visible'});
 global.document={querySelectorAll:s=>nodes.filter(n=>n.matches(s)),get body(){throw Error('Forbidden')}};
 """
-    result = subprocess.run([shutil.which('node'), '-e', prefix + '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', prefix + '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert 'unknown' not in data['sections']
@@ -340,7 +342,6 @@ def test_cli_lapras_source_without_running_search(monkeypatch):
 def semantic_dom(nodes, og='', title=''):
     """Execute the production JS with fictional elements, never a browser."""
     import json
-    import shutil
     import subprocess
     from scout_agent.lapras_search import DETAIL
     script = """
@@ -364,7 +365,7 @@ global.document={title:fixture.title,
  (fixture.og ? [{getAttribute:()=>fixture.og}] : []) : flatten(nodes).filter(n=>n.matches(s))},
  get body(){throw Error('Forbidden body access')}};
 """.replace('FIXTURE', json.dumps(dict(nodes=nodes, og=og, title=title)))
-    result = subprocess.run([shutil.which('node'), '-e', script +
+    result = subprocess.run([require_node(), '-e', script +
         '\nconsole.log(JSON.stringify((' + DETAIL + ')()));'], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

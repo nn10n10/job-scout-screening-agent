@@ -77,7 +77,7 @@ def test_invalid_state_body_and_csrf(tmp_path, body):
 def test_daily_running_blocks_local_write(tmp_path):
     path, ids = _seed_dashboard(tmp_path)
     entered, release = Event(), Event()
-    def runner(path, emit):
+    def runner(path, emit, platforms):
         entered.set()
         assert release.wait(5)
         return 0
@@ -85,7 +85,7 @@ def test_daily_running_blocks_local_write(tmp_path):
     headers = {'x-csrf-token': app.state.daily_runs.csrf_token}
     with TestClient(app) as client:
         try:
-            assert client.post('/api/daily/run', headers=headers).status_code == 202
+            assert client.post('/api/daily/run', headers=headers, json={'platforms': ['green', 'type', 'doda', 'mynavi']}).status_code == 202
             assert entered.wait(1)
             assert client.post(f'/jobs/{ids["infra"]}/state', json={'status': 'APPLIED'}, headers=headers).status_code == 409
         finally:

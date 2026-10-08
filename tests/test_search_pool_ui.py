@@ -2,12 +2,13 @@
 import sqlite3
 import json
 import re
-import shutil
 import subprocess
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
+
+from js_test_utils import require_node
 from fastapi.testclient import TestClient
 
 from scout_agent.green_discovery import Job
@@ -239,8 +240,7 @@ def test_local_presets_and_apply_repeated_query(pool, size):
                          type=item['type']) for item in form.inputs]
         presets = [dict(dimension=dimension, value=attrs['data-filter-preset'])
                    for dimension, attrs in form.presets]
-        node = shutil.which('node')
-        assert node, 'Node is required for the local preset regression fixture'
+        node = require_node()
         script = re.search(r'<script id="pool-filter-presets">(.*?)</script>', html, re.S)[1]
         harness = r"""
 const assert = require('node:assert/strict');

@@ -1,6 +1,8 @@
 """Fictional Search fixtures; no external access."""
 from unittest.mock import Mock
 import pytest
+
+from js_test_utils import require_node
 from scout_agent.mynavi_search import MynaviSearchAdapter, SOURCE, SOURCES, DETAIL, job_from_url
 from scout_agent.platform_discovery import TYPE_SNAPSHOT
 from scout_agent.green_discovery import GreenSearchDOMPending
@@ -181,7 +183,6 @@ def test_telemetry_source_pages_and_cursor():
 
 def test_fixed_dom_mapping():
     import json
-    import shutil
     import subprocess
     script = r"""
 const node = text => ({innerText:text, closest:()=>null});
@@ -197,7 +198,7 @@ global.document = {querySelector:s=>{if (!(s in local)) throw Error('non-local r
  querySelectorAll:s=>{if(s!=='table.jobOfferTable tr') throw Error('aggregate read');
  return [row('給与','架空給与'),row('勤務地','架空市'),row('給与補足','ignored')];}};
 """
-    result = subprocess.run([shutil.which('node'), '-e', script+'\nconsole.log(JSON.stringify(('+DETAIL+')()));'], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script+'\nconsole.log(JSON.stringify(('+DETAIL+')()));'], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     fields = json.loads(result.stdout)
     assert fields == dict(company='Fictional', title='Fictional Backend', responsibilities='架空概要\n架空詳細', required='架空資格', salary='架空給与', location='架空市', preferred='', technology='', remote='')

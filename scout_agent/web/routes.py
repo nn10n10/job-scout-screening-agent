@@ -193,13 +193,21 @@ async def set_search_job_state(request: Request, job_id: str):
 
 
 @router.post("/api/daily/run")
-def start_daily(request: Request):
+async def start_daily(request: Request):
     import secrets
     from fastapi.responses import JSONResponse
     manager = request.app.state.daily_runs
     if not secrets.compare_digest(request.headers.get('x-csrf-token', '').encode(), manager.csrf_token.encode()):
         raise HTTPException(403, 'CSRF 校验失败')
-    if not manager.start():
+    from scout_agent.daily import normalize_platforms
+    try:
+        data = await request.json()
+        if not isinstance(data, dict) or set(data) != {'platforms'} or not isinstance(data['platforms'], list):
+            raise ValueError()
+        platforms = normalize_platforms(data['platforms'])
+    except (ValueError, TypeError):
+        raise HTTPException(422, '请求必须仅包含非空 platforms 数组，且平台必须有效') from None
+    if not manager.start(platforms):
         raise HTTPException(409, '正在筛选，请等待本轮完成')
     return JSONResponse(manager.snapshot(), status_code=202, headers=PRIVATE_HEADERS)
 
