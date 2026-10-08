@@ -28,7 +28,7 @@
       data.finished_at && `结束：${data.finished_at}`, data.safe_error,
       data.latest_summary && `KEEP ${data.latest_summary.KEEP} · MAYBE ${data.latest_summary.MAYBE} · SKIP ${data.latest_summary.SKIP}`].filter(Boolean).join(' · ');
     const names = {green: 'Green', type: 'type', doda: 'doda', mynavi: 'マイナビ転職'};
-    const states = {idle: '待机', running: '运行中…', completed: '完成', failed: '失败', skipped: '未选择'};
+    const states = {idle: '待机', waiting: '等待后续处理', running: '运行中…', completed: '完成', failed: '失败', skipped: '未选择'};
     progress.replaceChildren(...checks.map(input => {
       const row = document.createElement('div');
       row.textContent = names[input.value] + ' · ' + (states[data.platform_status?.[input.value]] || '待机');

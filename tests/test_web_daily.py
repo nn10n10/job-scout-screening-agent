@@ -262,3 +262,24 @@ def test_worker_forwards_scope_and_structured_callback(tmp_path, monkeypatch, ca
     assert seen['_daily_platforms'] == ('green', 'doda')
     assert seen['argv'] == ['daily']
     assert capsys.readouterr().out == 'Daily event: {"platform": "green", "status": "running"}\n'
+
+
+def test_waiting_and_unique_running_events(tmp_path):
+    from scout_agent.web.daily_runs import DailyRunManager
+    manager = DailyRunManager(tmp_path / 'fictional.db')
+    manager.state.update(state='running', selected_platforms=['green', 'doda'],
+        platform_status={'green': 'waiting', 'type': 'skipped', 'doda': 'waiting', 'mynavi': 'skipped'})
+    manager._emit('Daily event: {"platform":"green","status":"running"}')
+    manager._emit('Daily event: {"platform":"doda","status":"running"}')
+    assert manager.snapshot()['platform_status']['green'] == 'waiting'
+    assert manager.snapshot()['current_platform'] == 'doda'
+    # An event for another platform must not clear the active platform.
+    manager._emit('Daily event: {"platform":"green","status":"completed"}')
+    assert manager.snapshot()['current_platform'] == 'doda'
+    manager._emit('Daily event: {"platform":"doda","status":"waiting"}')
+    assert manager.snapshot()['current_platform'] is None
+    manager._finish(False)
+    assert manager.snapshot()['platform_status']['green'] == 'completed'
+    assert manager.snapshot()['platform_status']['doda'] == 'failed'
+    from pathlib import Path
+    assert "waiting: '等待后续处理'" in Path('scout_agent/web/static/daily.js').read_text()

@@ -68,7 +68,7 @@ class DailyRunManager:
                               started_at=datetime.now(timezone.utc).isoformat(),
                               finished_at=None, safe_error=None, latest_summary=None,
                               selected_platforms=list(platforms), current_platform=None,
-                              platform_status={p: 'idle' if p in platforms else 'skipped' for p in DAILY_PLATFORMS})
+                              platform_status={p: 'waiting' if p in platforms else 'skipped' for p in DAILY_PLATFORMS})
         try:
             threading.Thread(target=self._run, daemon=True).start()
         except Exception:
@@ -81,14 +81,19 @@ class DailyRunManager:
                 event = json.loads(line[len('Daily event: '):])
                 if (not isinstance(event, dict) or set(event) != {'platform', 'status'}
                     or event['platform'] not in DAILY_PLATFORMS
-                    or event['status'] not in ('running', 'completed', 'failed')):
+                    or event['status'] not in ('waiting', 'running', 'completed', 'failed')):
                     return
                 with self.lock:
                     platform = event['platform']
                     if platform not in self.state['selected_platforms']:
                         return
+                    if event['status'] == 'running':
+                        for previous, status in self.state['platform_status'].items():
+                            if status == 'running' and previous != platform:
+                                self.state['platform_status'][previous] = 'waiting'
                     self.state['platform_status'][platform] = event['status']
-                    self.state['current_platform'] = platform if event['status'] == 'running' else None
+                    self.state['current_platform'] = next(
+                        (p for p, status in self.state['platform_status'].items() if status == 'running'), None)
                     self.state['stage'] = self.state['current_platform']
             except (ValueError, TypeError):
                 pass
@@ -101,7 +106,7 @@ class DailyRunManager:
     def _finish(self, success):
         with self.lock:
             for platform in self.state['selected_platforms']:
-                if self.state['platform_status'][platform] in ('idle', 'running'):
+                if self.state['platform_status'][platform] in ('idle', 'waiting', 'running'):
                     self.state['platform_status'][platform] = 'completed' if success else 'failed'
             self.state['current_platform'] = None
             self.state.update(state='completed' if success else 'failed', stage=None,

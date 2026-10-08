@@ -134,6 +134,8 @@ def run_daily(
                 flush=True,
             )
 
+            notify(platform, "waiting")
+
         # Repair an interrupted scan that saved full details before writing its
         # local decision. Only unevaluated doda/mynavi Scouts are touched.
         local_processed_ids: set[int] = set()
@@ -152,6 +154,8 @@ def run_daily(
                 except Exception as exc:
                     errors[f"{platform}:local:{scout_id}"] = _safe_error(exc)
 
+            notify(platform, "waiting")
+
         pending = _pending(db, platforms)
         classified_ids: set[int] = set()
         classifier_error: str | None = None
@@ -161,31 +165,35 @@ def run_daily(
                 classifier = classifier_factory(settings)
                 model_name = classifier.model_name
                 batch_size = settings.codex_batch_size if classifier.provider == "codex" else 1
-                for offset in range(0, len(pending), batch_size):
-                    batch = pending[offset:offset + batch_size]
-                    notify(batch[0][1].platform, "running")
-                    by_id = {str(scout_id): (scout_id, scout) for scout_id, scout in batch}
-                    if len(batch) > 1:
-                        evaluations = classifier.classify_many(
-                            [(str(scout_id), scout) for scout_id, scout in batch]
-                        )
-                    else:
-                        scout_id, scout = batch[0]
-                        evaluations = {str(scout_id): classifier.classify(scout)}
-                    if not isinstance(evaluations, dict) or set(evaluations) - set(by_id):
-                        raise ValueError("Classifier returned unexpected Scout IDs")
-                    for internal_id, (scout_id, scout) in by_id.items():
-                        if internal_id not in evaluations:
-                            continue
-                        evaluation = finalize_evaluation(evaluations[internal_id], scout)
-                        if db.save_evaluation_if_absent(
-                            scout_id, daily_run_id, evaluation,
-                            provider=classifier.provider, model_name=classifier.model_name,
-                        ):
-                            classified_ids.add(scout_id)
-                            summaries[scout.platform]["sent_to_classifier"] += 1
-                    if len(evaluations) < len(batch):
-                        raise ValueError("Classifier returned an incomplete batch; missing records remain pending")
+                for platform in platforms:
+                    platform_pending = [item for item in pending if item[1].platform == platform]
+                    for offset in range(0, len(platform_pending), batch_size):
+                        batch = platform_pending[offset:offset + batch_size]
+                        notify(batch[0][1].platform, "running")
+                        by_id = {str(scout_id): (scout_id, scout) for scout_id, scout in batch}
+                        if len(batch) > 1:
+                            evaluations = classifier.classify_many(
+                                [(str(scout_id), scout) for scout_id, scout in batch]
+                            )
+                        else:
+                            scout_id, scout = batch[0]
+                            evaluations = {str(scout_id): classifier.classify(scout)}
+                        if not isinstance(evaluations, dict) or set(evaluations) - set(by_id):
+                            raise ValueError("Classifier returned unexpected Scout IDs")
+                        for internal_id, (scout_id, scout) in by_id.items():
+                            if internal_id not in evaluations:
+                                continue
+                            evaluation = finalize_evaluation(evaluations[internal_id], scout)
+                            if db.save_evaluation_if_absent(
+                                scout_id, daily_run_id, evaluation,
+                                provider=classifier.provider, model_name=classifier.model_name,
+                            ):
+                                classified_ids.add(scout_id)
+                                summaries[scout.platform]["sent_to_classifier"] += 1
+                        if len(evaluations) < len(batch):
+                            raise ValueError("Classifier returned an incomplete batch; missing records remain pending")
+                    if platform_pending:
+                        notify(platform, "waiting")
             except Exception as exc:
                 classifier_error = _safe_error(exc)
                 errors["classifier"] = classifier_error

@@ -267,7 +267,7 @@ def test_daily_dry_run_never_opens_browser_or_model_or_writes(tmp_path, monkeypa
     assert not settings.output_path.exists()
 
 
-def test_daily_codex_batches_across_platforms_without_real_cli(tmp_path):
+def test_daily_codex_batches_by_platform_without_real_cli(tmp_path):
     settings = Settings(tmp_path, None, None, classifier_provider="codex", codex_batch_size=8)
 
     def fake_scan(platform, capture):
@@ -301,7 +301,7 @@ def test_daily_codex_batches_across_platforms_without_real_cli(tmp_path):
         settings, dry_run=False, scan_platform=fake_scan,
         classifier_factory=lambda _: fake, finalize_evaluation=lambda value, _: value,
     ) == 0
-    assert fake.batches == [8, 1]
+    assert fake.batches == [5, 4]
     with Database(settings.db_path, read_only=True) as db:
         assert db.conn.execute("SELECT COUNT(*) FROM evaluations WHERE provider='codex'").fetchone()[0] == 9
         assert db.conn.execute(
@@ -459,7 +459,7 @@ def test_selected_cli_scans_only_fixed_scope(tmp_path, monkeypatch):
                     _daily_progress=events.append) == 0
     assert FakeGreen.detail_calls == FakeDoda.detail_calls == 1
     assert FakeType.detail_calls == FakeMynavi.detail_calls == 0
-    assert [e['platform'] for e in events[:2]] == ['green', 'doda']
+    assert [e['platform'] for e in events if e['status'] == 'running'][:2] == ['green', 'doda']
     report = json.loads(next(settings.output_path.glob('*_daily_report.json')).read_text())
     assert set(report['platforms']) == {'green', 'doda'}
 
@@ -474,5 +474,61 @@ def test_platform_progress_reports_scan_and_classifier_failures(tmp_path):
         scan_platform=lambda p, c: 1 if p == 'doda' else 0,
         classifier_factory=lambda _: (_ for _ in ()).throw(RuntimeError('fictional failure')),
         finalize_evaluation=lambda e, _: e, progress=events.append) == 1
-    assert events[:2] == [{'platform': 'green', 'status': 'running'}, {'platform': 'doda', 'status': 'running'}]
+    assert [e for e in events if e['status'] == 'running'][:2] == [{'platform': 'green', 'status': 'running'}, {'platform': 'doda', 'status': 'running'}]
     assert events[-2:] == [{'platform': 'green', 'status': 'failed'}, {'platform': 'doda', 'status': 'failed'}]
+
+
+def test_sequential_progress_and_platform_batches(tmp_path):
+    from scout_agent.web.daily_runs import DailyRunManager
+    settings = _settings(tmp_path)
+    manager = DailyRunManager(settings.db_path)
+    manager.state.update(state='running', selected_platforms=list(DAILY_PLATFORMS),
+                         platform_status={p: 'waiting' for p in DAILY_PLATFORMS})
+    snapshots, scans, batches = [], [], []
+
+    def progress(event):
+        manager._emit('Daily event: ' + json.dumps(event))
+        state = manager.snapshot()
+        running = [p for p, status in state['platform_status'].items() if status == 'running']
+        assert len(running) <= 1
+        assert state['current_platform'] == state['stage'] == (running[0] if running else None)
+        snapshots.append(state)
+
+    def scan(platform, capture):
+        scans.append(platform)
+        assert manager.snapshot()['current_platform'] == platform
+        with Database(settings.db_path) as db:
+            for index in range(2):
+                db.save_scout(Scout(id=f'fictional-{platform}-{index}', platform=platform,
+                    company_name='架空会社', job_title='Cloud Engineer',
+                    jd_text='AWS 基盤の設計を主担当。'))
+        return 1 if platform == 'type' else 0
+
+    class Classifier:
+        provider = 'codex'
+        model_name = 'fictional'
+
+        def classify_many(self, items):
+            platforms = {scout.platform for _, scout in items}
+            assert len(platforms) == 1
+            platform = platforms.pop()
+            assert manager.snapshot()['current_platform'] == platform
+            batches.append(platform)
+            if platform == 'green':
+                assert manager.snapshot()['platform_status']['green'] == 'running'
+                assert manager.snapshot()['platform_status']['doda'] == 'waiting'
+            if platform == 'doda':
+                assert manager.snapshot()['platform_status']['green'] == 'waiting'
+            return {sid: Evaluation(verdict='MAYBE', confidence=.5, summary='虚构评价。')
+                    for sid, _ in items}
+
+    assert run_daily(settings, dry_run=False, scan_platform=scan,
+        classifier_factory=lambda _: Classifier(), finalize_evaluation=lambda e, _: e,
+        progress=progress) == 1
+    assert scans == batches == list(DAILY_PLATFORMS)
+    # Every scan ends awaiting later processing, never completed or still running.
+    for index, platform in enumerate(DAILY_PLATFORMS):
+        assert snapshots[index * 2 + 1]['platform_status'][platform] == 'waiting'
+        assert snapshots[index * 2 + 1]['current_platform'] is None
+    assert manager.snapshot()['platform_status'] == {
+        'green': 'completed', 'type': 'failed', 'doda': 'completed', 'mynavi': 'completed'}
