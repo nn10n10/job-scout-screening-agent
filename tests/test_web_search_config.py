@@ -1,10 +1,11 @@
 """Execute the shipped JavaScript with a fictional form/storage, without a browser."""
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from js_test_utils import require_node
 
 from fastapi.testclient import TestClient
 
@@ -14,8 +15,7 @@ from scout_agent.web.search_runs import LIMITS
 
 
 def test_search_config_reload_and_validation(tmp_path):
-    node = shutil.which('node')
-    assert node, 'Node is required for the Search form regression test'
+    node = require_node()
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
     script += 'const labels = ' + json.dumps(list(KEYWORDS)) + ';\n'
@@ -212,7 +212,7 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['求人一覧'], limits), null);
 console.log('Forkwell platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
 
@@ -266,7 +266,7 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['求人検索'], limits), null);
 console.log('Forkwell platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
 
@@ -320,7 +320,7 @@ for (const platform of ['green','type','lapras','forkwell','type','doda','green'
 }
 console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
 """
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'Green/Forkwell restored' in result.stdout
 
@@ -359,7 +359,7 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['おすすめ求人'], limits), null);
 console.log('Findy platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
 
@@ -413,7 +413,7 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'], limits), null);
 console.log('Type platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
 
@@ -452,7 +452,7 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['インフラエンジニア'], limits), null);
 console.log('doda platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
 
@@ -491,6 +491,6 @@ assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['インフラエンジニア'], limits), null);
 console.log('mynavi platform and source survive reload; cross-platform sources rejected');
 '''
-    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout

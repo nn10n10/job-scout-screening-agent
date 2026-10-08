@@ -2,6 +2,8 @@ from threading import Event
 import time
 
 import pytest
+
+from js_test_utils import require_node
 from fastapi.testclient import TestClient
 
 from scout_agent.web.app import create_app
@@ -217,13 +219,29 @@ def test_daily_controls(tmp_path):
     assert 'preset.disabled = running || posting' in js
 
 
+def test_daily_selection_sync_contract():
+    """Keep the run identity contract covered even without a JS runtime."""
+    from pathlib import Path
+    js = Path('scout_agent/web/static/daily.js').read_text()
+    sync = js.split('function render(data) {', 1)[1].split('latest = data;', 1)[0]
+    assert 'let syncedRun;' in js
+    assert 'if (data.selected_platforms?.length && syncedRun !== data.started_at) {' in sync
+    assert 'input.checked = data.selected_platforms.includes(input.value);' in sync
+    assert 'syncedRun = data.started_at;' in sync
+
+
+def test_optional_node_missing_skips(monkeypatch):
+    import js_test_utils
+    monkeypatch.setattr(js_test_utils.shutil, 'which', lambda name: None)
+    with pytest.raises(pytest.skip.Exception, match='Node unavailable'):
+        require_node()
+
+
 def test_daily_checkboxes_sync_once_per_run():
     from pathlib import Path
-    import shutil
     import subprocess
 
-    node = shutil.which('node')
-    assert node, 'Node is required for the daily selection regression fixture'
+    node = require_node()
     harness = r"""
 const assert = require('node:assert/strict');
 const element = () => ({disabled: false, textContent: '', dataset: {},
