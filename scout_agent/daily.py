@@ -18,6 +18,14 @@ from scout_agent.storage.db import Database
 DAILY_PLATFORMS = ("green", "type", "doda", "mynavi")
 
 
+def normalize_platforms(platforms):
+    if not isinstance(platforms, (list, tuple)) or not platforms:
+        raise ValueError("请选择至少一个平台")
+    if any(not isinstance(p, str) or p not in DAILY_PLATFORMS for p in platforms):
+        raise ValueError("平台无效")
+    return tuple(p for p in DAILY_PLATFORMS if p in platforms)
+
+
 def _new_ids(db: Database, platform: str, after_id: int) -> set[int]:
     return {
         int(row["id"]) for row in db.conn.execute(
@@ -26,11 +34,11 @@ def _new_ids(db: Database, platform: str, after_id: int) -> set[int]:
     }
 
 
-def _pending(db: Database) -> list[tuple[int, Scout]]:
+def _pending(db: Database, platforms=DAILY_PLATFORMS) -> list[tuple[int, Scout]]:
     # This includes a previous daily's fully captured but unevaluated details.
     # Existing evaluations, including historical paid results, are never selected.
     return [
-        item for platform in DAILY_PLATFORMS
+        item for platform in platforms
         for item in db.get_scouts_for_evaluation(
             platform=platform, eligible_only=platform in {"doda", "mynavi"},
         )
@@ -44,9 +52,12 @@ def _safe_error(exc: Exception) -> str:
     return f"{type(exc).__name__}; pending records retained for retry"
 
 
-def _pending_count(db: Database) -> int:
-    count = len(_pending(db))
-    for table in ("type_list_items", "doda_list_items", "mynavi_list_items"):
+def _pending_count(db: Database, platforms=DAILY_PLATFORMS) -> int:
+    count = len(_pending(db, platforms))
+    for platform in platforms:
+        if platform == "green":
+            continue
+        table = f"{platform}_list_items"
         if db.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,),
         ).fetchone() is None:
@@ -62,7 +73,14 @@ def run_daily(
     scan_platform: Callable[[str, dict], int],
     classifier_factory: Callable[[Settings], object],
     finalize_evaluation: Callable[[Evaluation, Scout], Evaluation],
+    platforms=None, progress=None,
 ) -> int:
+    platforms = normalize_platforms(DAILY_PLATFORMS if platforms is None else platforms)
+
+    def notify(platform, status):
+        if progress:
+            progress({"platform": platform, "status": status})
+
     if settings.browser_mode != "cdp":
         print("daily requires BROWSER_MODE=cdp; it never launches Chromium.", file=sys.stderr)
         return 2
@@ -70,8 +88,8 @@ def run_daily(
         count = 0
         if settings.db_path.exists():
             with Database(settings.db_path, read_only=True) as db:
-                count = _pending_count(db)
-        print("Daily dry-run: green -> type -> doda -> mynavi")
+                count = _pending_count(db, platforms)
+        print("Daily dry-run: " + " -> ".join(platforms))
         print(f"Classifier provider: {settings.classifier_provider}")
         print(f"Stored classifier pending: {count}")
         print("No browser, model, evaluation, database write, or report generation.")
@@ -82,7 +100,8 @@ def run_daily(
         summaries: dict[str, dict] = {}
         new_ids: set[int] = set()
         errors: dict[str, str] = {}
-        for platform in DAILY_PLATFORMS:
+        for platform in platforms:
+            notify(platform, "running")
             before_id = int(db.conn.execute("SELECT COALESCE(MAX(id),0) FROM scouts").fetchone()[0])
             capture: dict = {}
             try:
@@ -118,7 +137,10 @@ def run_daily(
         # Repair an interrupted scan that saved full details before writing its
         # local decision. Only unevaluated doda/mynavi Scouts are touched.
         local_processed_ids: set[int] = set()
-        for platform in ("doda", "mynavi"):
+        for platform in platforms:
+            if platform not in {"doda", "mynavi"}:
+                continue
+            notify(platform, "running")
             for scout_id, scout in db.get_scouts_for_evaluation(platform=platform):
                 if not scout.jd_text:
                     continue
@@ -130,7 +152,7 @@ def run_daily(
                 except Exception as exc:
                     errors[f"{platform}:local:{scout_id}"] = _safe_error(exc)
 
-        pending = _pending(db)
+        pending = _pending(db, platforms)
         classified_ids: set[int] = set()
         classifier_error: str | None = None
         model_name = "none"
@@ -141,6 +163,7 @@ def run_daily(
                 batch_size = settings.codex_batch_size if classifier.provider == "codex" else 1
                 for offset in range(0, len(pending), batch_size):
                     batch = pending[offset:offset + batch_size]
+                    notify(batch[0][1].platform, "running")
                     by_id = {str(scout_id): (scout_id, scout) for scout_id, scout in batch}
                     if len(batch) > 1:
                         evaluations = classifier.classify_many(
@@ -167,6 +190,13 @@ def run_daily(
                 classifier_error = _safe_error(exc)
                 errors["classifier"] = classifier_error
 
+        for platform in platforms:
+            failed = platform in errors or any(key.startswith(platform + ":") for key in errors)
+            failed = failed or (classifier_error is not None and any(
+                scout.platform == platform and scout_id not in classified_ids for scout_id, scout in pending
+            ))
+            notify(platform, "failed" if failed else "completed")
+
         report_ids = new_ids | classified_ids | local_processed_ids
         results = db.get_results_for_scout_ids(report_ids)
         new_local = db.get_results_for_scout_ids(new_ids | local_processed_ids)
@@ -179,7 +209,7 @@ def run_daily(
             "list_scanned", "new", "already_seen", "local_skip", "sent_to_classifier",
             "KEEP", "MAYBE", "SKIP",
         )}
-        pending_remaining = _pending_count(db)
+        pending_remaining = _pending_count(db, platforms)
         db.finish_run(daily_run_id, error="partial failure" if errors else None)
         html, json_path = generate_daily_report(
             settings.output_path, platform_stats=summaries, totals=totals,

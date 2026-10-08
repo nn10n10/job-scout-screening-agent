@@ -108,6 +108,7 @@ def _finalize_evaluation(evaluation, scout: Scout):
 def main(
     argv: list[str] | None = None, *,
     _daily_mode: bool = False, _daily_capture: dict | None = None, _settings=None,
+    _daily_platforms=None, _daily_progress=None,
 ) -> int:
     parser = argparse.ArgumentParser(description="READ-ONLY local Job Scout screening agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -178,6 +179,7 @@ def main(
                 ["scan", "--platform", platform],
                 _daily_mode=True, _daily_capture=capture, _settings=settings,
             ),
+            platforms=_daily_platforms, progress=_daily_progress,
             classifier_factory=_classifier,
             finalize_evaluation=_finalize_evaluation,
         )

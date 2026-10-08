@@ -15,8 +15,16 @@
       <p class="intro">浏览本地结果，或手动运行标准 Scout daily；招聘网站操作严格只读。</p>
     </header>
     <section aria-label="Scout daily">
-      <button id="daily-run" data-csrf="{{ daily_csrf_token }}">▶ 立即运行 Scout 筛选</button>
+      <strong>Scout 筛选</strong>
+      <div id="daily-platforms">
+        {% for value, label in [('green', 'Green'), ('type', 'type'), ('doda', 'doda'), ('mynavi', 'マイナビ転職')] %}
+        <label><input type="checkbox" value="{{ value }}" checked> {{ label }}</label>
+        {% endfor %}
+        <button type="button" id="daily-all">全部</button>
+      </div>
+      <button type="button" id="daily-run" data-csrf="{{ daily_csrf_token }}">▶ 运行所选平台</button>
       <p id="daily-status" role="status" aria-live="polite">正在获取运行状态…</p>
+      <div id="daily-platform-status" aria-live="polite"></div>
     </section>
 
     <section class="dashboard-summary" aria-label="当前筛选摘要">

@@ -411,3 +411,68 @@ def test_daily_reports_detail_failure_even_when_platform_scan_returns_zero(tmp_p
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert "detail fetch(es) failed" in report["errors"]["mynavi"]
     assert report["platforms"]["doda"]["error"] is None
+
+
+def test_selected_scope_preserves_other_pending(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    with Database(settings.db_path) as db:
+        for platform in DAILY_PLATFORMS:
+            db.save_scout(Scout(id='pending-' + platform, platform=platform,
+                company_name='架空会社', job_title='Cloud Engineer', jd_text='AWS 基盤の設計を主担当。'))
+    visited, classified, local, events = [], [], [], []
+    from scout_agent import daily
+    original = daily.reprocess_stored_scout
+    def reprocess(scout):
+        local.append(scout.platform)
+        return original(scout)
+    monkeypatch.setattr(daily, 'reprocess_stored_scout', reprocess)
+    class Classifier:
+        provider = 'mock'
+        model_name = 'fictional'
+        def classify(self, scout):
+            classified.append(scout.platform)
+            return Evaluation(verdict='MAYBE', confidence=.5, summary='虚构评价。')
+    def run(platforms):
+        return run_daily(settings, dry_run=False, platforms=platforms,
+            scan_platform=lambda p, c: visited.append(p) or 0,
+            classifier_factory=lambda _: Classifier(),
+            finalize_evaluation=lambda e, _: e, progress=events.append)
+    assert run(['green']) == 0
+    assert visited == classified == ['green'] and local == []
+    with Database(settings.db_path, read_only=True) as db:
+        assert all(db.get_scouts_for_evaluation(platform=p) for p in ('type', 'doda', 'mynavi'))
+    visited.clear()
+    assert run(['doda', 'green', 'doda']) == 0
+    assert visited == ['green', 'doda']
+    assert classified == ['green', 'doda'] and local == ['doda']
+    with Database(settings.db_path, read_only=True) as db:
+        assert all(db.get_scouts_for_evaluation(platform=p) for p in ('type', 'mynavi'))
+    assert {'platform': 'green', 'status': 'running'} in events
+    assert {'platform': 'doda', 'status': 'completed'} in events
+
+
+def test_selected_cli_scans_only_fixed_scope(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    _fake_adapters(monkeypatch)
+    events = []
+    assert cli.main(['daily'], _settings=settings, _daily_platforms=['doda', 'green', 'doda'],
+                    _daily_progress=events.append) == 0
+    assert FakeGreen.detail_calls == FakeDoda.detail_calls == 1
+    assert FakeType.detail_calls == FakeMynavi.detail_calls == 0
+    assert [e['platform'] for e in events[:2]] == ['green', 'doda']
+    report = json.loads(next(settings.output_path.glob('*_daily_report.json')).read_text())
+    assert set(report['platforms']) == {'green', 'doda'}
+
+
+def test_platform_progress_reports_scan_and_classifier_failures(tmp_path):
+    settings = _settings(tmp_path)
+    events = []
+    with Database(settings.db_path) as db:
+        db.save_scout(Scout(id='fictional-pending', platform='green', company_name='架空会社',
+                           job_title='Cloud Engineer', jd_text='AWS 基盤を設計。'))
+    assert run_daily(settings, dry_run=False, platforms=['doda', 'green'],
+        scan_platform=lambda p, c: 1 if p == 'doda' else 0,
+        classifier_factory=lambda _: (_ for _ in ()).throw(RuntimeError('fictional failure')),
+        finalize_evaluation=lambda e, _: e, progress=events.append) == 1
+    assert events[:2] == [{'platform': 'green', 'status': 'running'}, {'platform': 'doda', 'status': 'running'}]
+    assert events[-2:] == [{'platform': 'green', 'status': 'failed'}, {'platform': 'doda', 'status': 'failed'}]
