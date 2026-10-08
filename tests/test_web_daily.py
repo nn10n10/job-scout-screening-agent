@@ -217,6 +217,77 @@ def test_daily_controls(tmp_path):
     assert 'preset.disabled = running || posting' in js
 
 
+def test_daily_checkboxes_sync_once_per_run():
+    from pathlib import Path
+    import shutil
+    import subprocess
+
+    node = shutil.which('node')
+    assert node, 'Node is required for the daily selection regression fixture'
+    harness = r"""
+const assert = require('node:assert/strict');
+const element = () => ({disabled: false, textContent: '', dataset: {},
+  listeners: {}, addEventListener(name, callback) { this.listeners[name] = callback; },
+  replaceChildren() {}});
+const checks = ['green', 'type', 'doda', 'mynavi'].map(value =>
+  Object.assign(element(), {value, checked: true}));
+const elements = Object.fromEntries(['daily-run', 'daily-status', 'daily-all',
+  'daily-platform-status'].map(id => [id, element()]));
+global.document = {getElementById: id => elements[id],
+  querySelectorAll: () => checks, createElement: element};
+let data = {state: 'idle', selected_platforms: [], started_at: null};
+let nextPoll;
+let reloads = 0;
+let fetches = 0;
+global.fetch = async () => { fetches++; return {ok: true, json: async () => data}; };
+global.setTimeout = callback => { nextPoll = callback; };
+global.window = {location: {reload() { reloads++; }}};
+const selected = () => checks.filter(input => input.checked).map(input => input.value);
+const flush = () => new Promise(resolve => setImmediate(resolve));
+const poll = async update => { data = update; await nextPoll(); };
+"""
+    assertions = r"""
+(async () => {
+  await flush();
+  assert.deepEqual(selected(), ['green', 'type', 'doda', 'mynavi']);
+  const completed = {state: 'completed', started_at: 'fictional-run-1',
+    selected_platforms: ['green'], platform_status: {
+      green: 'completed', type: 'skipped', doda: 'skipped', mynavi: 'skipped'}};
+  await poll(completed);
+  assert.deepEqual(selected(), ['green']);
+  assert(checks.every(input => !input.disabled));
+  checks[2].checked = true;
+  checks[2].listeners.change();
+  await poll(completed);
+  assert.deepEqual(selected(), ['green', 'doda']);
+  const beforePreset = fetches;
+  elements['daily-all'].listeners.click();
+  assert.deepEqual(selected(), ['green', 'type', 'doda', 'mynavi']);
+  assert.equal(fetches, beforePreset);
+  await poll(completed);
+  assert.deepEqual(selected(), ['green', 'type', 'doda', 'mynavi']);
+  const running = {state: 'running', started_at: 'fictional-run-2',
+    selected_platforms: ['doda']};
+  await poll(running);
+  assert.deepEqual(selected(), ['doda']);
+  assert(checks.every(input => input.disabled));
+  assert(elements['daily-all'].disabled);
+  assert(elements['daily-run'].disabled);
+  await poll({...running, state: 'failed'});
+  assert(checks.every(input => !input.disabled));
+  assert.equal(reloads, 1);
+  checks[0].checked = true;
+  await poll({...running, state: 'failed'});
+  assert.deepEqual(selected(), ['green', 'doda']);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, '-e', harness + Path('scout_agent/web/static/daily.js').read_text() + assertions],
+        capture_output=True, text=True, shell=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_progress_rejects_untrusted_output_and_retains_failure(tmp_path):
     from scout_agent.web.daily_runs import DailyRunManager
     manager = DailyRunManager(tmp_path / 'fictional.db')

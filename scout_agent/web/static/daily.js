@@ -18,8 +18,13 @@
   });
   let wasRunning = false;
   let posting = false;
+  let syncedRun;
   function render(data) {
     const running = data.state === 'running';
+    if (data.selected_platforms?.length && syncedRun !== data.started_at) {
+      checks.forEach(input => { input.checked = data.selected_platforms.includes(input.value); });
+      syncedRun = data.started_at;
+    }
     latest = data;
     lock(running);
     button.textContent = running ? '筛选中…' : '▶ 运行所选平台';
