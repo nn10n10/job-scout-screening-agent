@@ -278,7 +278,7 @@ assert.deepEqual(selected('verdict'), ['TARGET', 'POSSIBLE']);
 click('verdict', 'all');
 assert.deepEqual(selected('verdict'), ['TARGET', 'POSSIBLE', 'DROP']);
 click('platform', 'all');
-assert.deepEqual(selected('platform'), ['green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi']);
+assert.deepEqual(selected('platform'), ['green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi', 'indeed']);
 click('status', 'all');
 assert.deepEqual(selected('status'), ['ACTIVE', 'APPLIED', 'EXCLUDED']);
 const query = new URLSearchParams(controls.filter(input => input.type === 'hidden' || input.checked)

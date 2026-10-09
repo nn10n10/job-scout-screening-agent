@@ -431,4 +431,7 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
   --cdp-endpoint http://127.0.0.1:9222 --platform indeed
 ```
 
-仅允许 `https://jp.indeed.com`，仅读取已打开 tabs，不导航、点击、刷新、关闭或登录。输出 `/jobs`、SEO 固定 shape、jk 链接种类计数、固定 query key presence、`start` 分页候选、详情 selector bool 与 JSON-LD JobPosting 固定字段 presence；不输出真实关键词、location、jk、tracking value、公司、职位或 JD。只有 exact `/viewjob` current 与同源 canonical 的单个合法 jk 一致，才报告 `jk` 身份候选。challenge、登录、加载、页面漂移和异常快照 fail-closed；不绕过 CAPTCHA。Bridge/tests 仅使用虚构数据，production 来源、identity 和分页须等待 live evidence 与 supervisor review。
+仅允许 `https://jp.indeed.com`，仅读取已打开 tabs，不导航、点击、刷新、关闭或登录。输出 `/jobs`、SEO 固定 shape、jk 链接种类计数、固定 query key presence、`start` 分页候选、详情 selector bool 与 JSON-LD JobPosting 固定字段 presence；不输出真实关键词、location、jk、tracking value、公司、职位或 JD。只有 exact `/viewjob` current 与同源 canonical 的单个合法 jk 一致，才报告 `jk` 身份候选。challenge、登录、加载、页面漂移和异常快照 fail-closed；不绕过 CAPTCHA。Bridge/tests 仅使用虚构数据，Stage A discovery 保留；生产接入依据 supervisor 已验证 live evidence，分页 offset 仍待验证。
+
+Active Search 现支持 8 个平台：Green、Forkwell、LAPRAS、Findy、Type、doda、マイナビ転職、Indeed。
+Indeed：`python -m scout_agent search indeed --keyword インフラエンジニア`，默认 recall-first 扫描 インフラエンジニア、クラウドエンジニア、SRE、DevOps 四个关键词，不固定 location。目前 page1-only，不推测 start offset、不推进分页游标。职位身份为 `indeed:<jk>`；只保存严格 canonical `/viewjob?jk=<jk>`，tracking 链接不持久化。详情使用 JobPosting 固定字段及已验证局部 DOM fallback，读取前后校验 current/canonical/jk；challenge、登录、加载、漂移、缺标题或职责均安全停止，不绕过 CAPTCHA。保持缓存、人工状态、namespace 和 POLICY_VERSION；本轮仅虚构离线验证，完成后等待 supervisor，未运行 live production Search。

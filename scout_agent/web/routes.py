@@ -122,7 +122,7 @@ def search_pool(
         "all_platforms": PLATFORMS, "source_label": source_label,
         "source_labels": {p: {s: source_label(p, s) for s in values} for p, values in {
             'green': KEYWORDS, 'forkwell': ['求人一覧'], 'lapras': ['求人検索'],
-            'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
+            'indeed': ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps'], 'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
             'doda': ['インフラエンジニア'], 'mynavi': ['インフラエンジニア'],
         }.items()},
         "cards": search_cards(pool['results'], pool['states']), "sources": KEYWORDS, "limits": LIMITS,

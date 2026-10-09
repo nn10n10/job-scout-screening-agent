@@ -6,7 +6,7 @@ from scout_agent.storage.db import Database
 
 STATUSES = ('ACTIVE', 'APPLIED', 'EXCLUDED')
 VERDICTS = ('TARGET', 'POSSIBLE', 'DROP')
-PLATFORMS = ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi')
+PLATFORMS = ('green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi', 'indeed')
 PAGE_SIZES = (10, 20, 50)
 
 
@@ -57,6 +57,8 @@ def source_label(platform, source):
         return source + ' 相关职位'
     if platform in ('green', 'doda', 'mynavi') and source == 'インフラエンジニア':
         return source + '职种'
+    if platform == 'indeed':
+        return {'インフラエンジニア': '基础设施工程师', 'クラウドエンジニア': '云工程师', 'SRE': 'SRE', 'DevOps': 'DevOps'}.get(source, source)
     if platform == 'type':
         return source + '（职种入口）'
     return {('forkwell', '求人一覧'): '全部求人', ('lapras', '求人検索'): '求人搜索首页',
