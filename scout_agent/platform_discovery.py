@@ -7,7 +7,7 @@ import re
 import sys
 from urllib.parse import urlsplit, parse_qsl
 
-from scout_agent import mynavi_discovery
+from scout_agent import mynavi_discovery, indeed_discovery
 
 from scout_agent.lapras_structure import STRUCTURE, sanitize
 from scout_agent.doda_structure import STRUCTURE as DODA_STRUCTURE, sanitize as sanitize_doda
@@ -21,6 +21,8 @@ PLATFORMS = {
     'doda': frozenset({'doda.jp'}),
     'mynavi': frozenset({'tenshoku.mynavi.jp'}),
 }
+DEFAULT_PLATFORMS = tuple(PLATFORMS)
+PLATFORMS['indeed'] = frozenset({'jp.indeed.com'})
 SEGMENTS = frozenset({'jobs', 'job', 'search', '求人', 'companies', 'company',
                       'home', 'career', 'careers', 'list', 'detail', 'index', 'view'})
 LABELS = frozenset({'仕事内容', '応募資格', '必須要件', '歓迎要件', '給与', '勤務地',
@@ -144,6 +146,8 @@ def platform_summary(rows, platforms):
 
 
 def evidence(platform, url, snapshot):
+    if platform == 'indeed':
+        return indeed_discovery.evidence(url, snapshot)
     result = {'platform': platform, 'safe_failure_category': 'NONE'}
     if platform == 'mynavi':
         mynavi_discovery.validate(snapshot)
@@ -461,22 +465,34 @@ def collect(browser, platforms):
         for page in pages[:10]:
             try:
                 before = page.url
+                if platform == 'indeed' and indeed_discovery.challenge_url(before):
+                    output.append(failure(platform, 'CHALLENGE'))
+                    continue
                 if login_url(before, platform):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                     continue
-                script = (MYNAVI_SNAPSHOT if platform == 'mynavi' else
+                script = (indeed_discovery.SNAPSHOT if platform == 'indeed' else
+                          MYNAVI_SNAPSHOT if platform == 'mynavi' else
                           DODA_DETAIL_SNAPSHOT if platform == 'doda' and doda_diagnostic_route(before) else
                           FINDY_DETAIL_SNAPSHOT if platform == 'findy' and exact_detail(before) else
                           LAPRAS_DETAIL_SNAPSHOT if lapras_numeric_detail(platform, before) else TYPE_SNAPSHOT if platform == 'type' else SNAPSHOT)
                 snapshot = page.evaluate(script)
-                if login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
+                if platform == 'indeed' and page.url != before:
+                    category = ('CHALLENGE' if indeed_discovery.challenge_url(page.url) else
+                                'NEEDS_LOGIN' if login_url(page.url, platform) else 'PAGE_CHANGED')
+                    output.append(failure(platform, category))
+                elif platform == 'indeed':
+                    output.append(evidence(platform, before, snapshot))
+                elif login_url(page.url, platform) or (allowed(page.url, platform) and snapshot.get('login')):
                     output.append(failure(platform, 'NEEDS_LOGIN'))
                 elif page.url != before:
                     output.append({'platform': platform, 'safe_failure_category': 'PAGE_CHANGED'})
                 else:
                     output.append(evidence(platform, before, snapshot))
             except Exception:
-                output.append(failure(platform, 'NEEDS_LOGIN' if login_url(page.url, platform) else 'READ_FAILED'))
+                category = ('CHALLENGE' if platform == 'indeed' and indeed_discovery.challenge_url(page.url) else
+                            'NEEDS_LOGIN' if login_url(page.url, platform) else 'READ_FAILED')
+                output.append(failure(platform, category))
     return output
 
 
@@ -502,12 +518,12 @@ def main(argv=None):
         with sync_playwright() as playwright:
             browser = playwright.chromium.connect_over_cdp(args.cdp_endpoint, timeout=10000)
             # Stopping Playwright disconnects; never close the user's browser.
-            rows = collect(browser, args.platform or list(PLATFORMS))
+            rows = collect(browser, args.platform or list(DEFAULT_PLATFORMS))
     except Exception:
         print(json.dumps({'safe_failure_category': 'CDP_UNAVAILABLE'}))
         return 1
     print(json.dumps(rows, ensure_ascii=False, indent=2))
-    for row in platform_summary(rows, args.platform or list(PLATFORMS)):
+    for row in platform_summary(rows, args.platform or list(DEFAULT_PLATFORMS)):
         # Keep stdout JSON compatible; summaries are fixed, redacted CLI messages.
         print(json.dumps(row, ensure_ascii=False), file=sys.stderr)
     return 0 if all(row['safe_failure_category'] == 'NONE' for row in rows) else 1

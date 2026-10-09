@@ -447,6 +447,11 @@ def search_command(args, settings, *, adapter=None):
 
     def progress(label, page):
         nonlocal source, number
+        if getattr(args, 'platform', 'green') == 'indeed':
+            from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
+            if label not in INDEED_SOURCES or page != 1:
+                source, number = 'NONE', 0
+                return
         if getattr(args, 'platform', 'green') in {'type', 'doda', 'mynavi'}:
             from scout_agent.type_search import SOURCES as TYPE_SOURCES
             from scout_agent.mynavi_search import SOURCES as MYNAVI_SOURCES
@@ -463,10 +468,11 @@ def search_command(args, settings, *, adapter=None):
             from scout_agent.mynavi_search import MynaviSearchAdapter
             from scout_agent.doda_search import DodaSearchAdapter
             from scout_agent.type_search import TypeSearchAdapter
+            from scout_agent.indeed_search import IndeedSearchAdapter
             from scout_agent.findy_search import FindySearchAdapter
             from scout_agent.lapras_search import LaprasSearchAdapter
             adapter = {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter, 'mynavi': MynaviSearchAdapter}[getattr(args, 'platform', 'green')]()
+                       'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter, 'mynavi': MynaviSearchAdapter, 'indeed': IndeedSearchAdapter}[getattr(args, 'platform', 'green')]()
         return _search_command(args, settings, adapter=adapter, progress=progress)
     except (GreenSearchDOMPending, ValueError, Error) as exc:
         if (isinstance(exc, GreenSearchDOMPending)
@@ -514,11 +520,12 @@ def search_command(args, settings, *, adapter=None):
         from scout_agent.lapras_search import SOURCES as LAPRAS_SOURCES
         from scout_agent.doda_search import SOURCES as DODA_SOURCES
         from scout_agent.mynavi_search import SOURCES as MYNAVI_SOURCES
-        allowed_sources = MYNAVI_SOURCES if getattr(args, 'platform', 'green') == 'mynavi' else DODA_SOURCES if getattr(args, 'platform', 'green') == 'doda' else TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
+        from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
+        allowed_sources = INDEED_SOURCES if getattr(args, 'platform', 'green') == 'indeed' else MYNAVI_SOURCES if getattr(args, 'platform', 'green') == 'mynavi' else DODA_SOURCES if getattr(args, 'platform', 'green') == 'doda' else TYPE_SOURCES if getattr(args, 'platform', 'green') == 'type' else (
             *KEYWORDS, *FORKWELL_SOURCES, *LAPRAS_SOURCES, *FINDY_SOURCES, *TYPE_SOURCES)
         if source not in allowed_sources:
             source, number = 'NONE', 0
-        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type', 'doda': 'Doda', 'mynavi': 'Mynavi'}.get(getattr(args, 'platform', 'green'), 'Green')
+        platform_label = {'green': 'Green', 'forkwell': 'Forkwell', 'lapras': 'LAPRAS', 'findy': 'Findy', 'type': 'Type', 'doda': 'Doda', 'mynavi': 'Mynavi', 'indeed': 'Indeed'}.get(getattr(args, 'platform', 'green'), 'Green')
         print(f'{platform_label} safety stop: source={source} page={number} category={reason}',
               file=sys.stderr, flush=True)
         return 1
@@ -531,10 +538,11 @@ def _search_command(args, settings, *, adapter=None, progress=None):
     from scout_agent.mynavi_search import MynaviSearchAdapter
     from scout_agent.doda_search import DodaSearchAdapter
     from scout_agent.type_search import TypeSearchAdapter
+    from scout_agent.indeed_search import IndeedSearchAdapter
     from scout_agent.findy_search import FindySearchAdapter
     from scout_agent.lapras_search import LaprasSearchAdapter
     adapter = adapter or {'green': GreenSearchAdapter, 'forkwell': ForkwellSearchAdapter,
-                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter, 'mynavi': MynaviSearchAdapter}[getattr(args, 'platform', 'green')]()
+                          'lapras': LaprasSearchAdapter, 'findy': FindySearchAdapter, 'type': TypeSearchAdapter, 'doda': DodaSearchAdapter, 'mynavi': MynaviSearchAdapter, 'indeed': IndeedSearchAdapter}[getattr(args, 'platform', 'green')]()
     adapter.ensure_verified()
     from scout_agent.green_discovery import source_url
     sources = args.keyword or getattr(adapter, 'source_labels', KEYWORDS)

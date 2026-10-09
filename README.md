@@ -423,3 +423,15 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
 输出仅包含固定结构：exact `/jobinfo-:id4/` 与 `/job/:segment/` anchor 计数、allowlist tracking key presence、脱敏 source shape、final `/pg<digits>/` 分页候选以及普通详情 DOM bool。只有 current 与 same-origin canonical 的四段 ID 完全一致，才报告 `jobinfo-id4` 身份候选；该候选尚未用于 production。登录、加载或快照异常 fail-closed；不输出真实 ID、criteria、query value、公司、职位或 JD。Bridge/tests 仅用虚构数据，live 结果须等待 supervisor review 后再确定下一阶段。
 
 マイナビ転職 主动 Search：`python -m scout_agent search mynavi --keyword インフラエンジニア`。仅启用已验证的 `/engineer/list/o166/` 来源及 `/pgN/` 分页。职位身份 `mynavi:<四段ID>`，游标 `mynavi:インフラエンジニア`；tracking query/fragment 不保存。详情仅读取固定局部 selector，current/canonical 身份漂移、登录失效或缺少标题/职责时安全停止。保持 recall-first、缓存、人工状态和 POLICY_VERSION，不复用 Scout 严筛。WebUI 支持来源恢复、分页设置及经身份验证的 マイナビ転職 外链。本次仅虚构数据验证，真实验收待 supervisor。
+
+Indeed Japan 当前仅支持 Stage A.1 只读 discovery；尚无 production Search adapter、CLI search 或 WebUI 平台。等待 supervisor 后，由用户在现有 9222 Chrome 手动打开实际搜索结果、1–2 个普通详情和下一页，保持 tabs 打开，再在授权环境运行：
+
+```bash
+PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
+  --cdp-endpoint http://127.0.0.1:9222 --platform indeed
+```
+
+仅允许 `https://jp.indeed.com`，仅读取已打开 tabs，不导航、点击、刷新、关闭或登录。输出 `/jobs`、SEO 固定 shape、jk 链接种类计数、固定 query key presence、`start` 分页候选、详情 selector bool 与 JSON-LD JobPosting 固定字段 presence；不输出真实关键词、location、jk、tracking value、公司、职位或 JD。只有 exact `/viewjob` current 与同源 canonical 的单个合法 jk 一致，才报告 `jk` 身份候选。challenge、登录、加载、页面漂移和异常快照 fail-closed；不绕过 CAPTCHA。Bridge/tests 仅使用虚构数据，Stage A discovery 保留；生产接入依据 supervisor 已验证 live evidence，分页 offset 仍待验证。
+
+Active Search 现支持 8 个平台：Green、Forkwell、LAPRAS、Findy、Type、doda、マイナビ転職、Indeed。
+Indeed：`python -m scout_agent search indeed --keyword インフラエンジニア`，默认 recall-first 扫描 インフラエンジニア、クラウドエンジニア、SRE、DevOps 四个关键词，不固定 location。目前 page1-only，不推测 start offset、不推进分页游标。职位身份为 `indeed:<jk>`；只保存严格 canonical `/viewjob?jk=<jk>`，tracking 链接不持久化。详情使用 JobPosting 固定字段及已验证局部 DOM fallback，读取前后校验 current/canonical/jk；challenge、登录、加载、漂移、缺标题或职责均安全停止，不绕过 CAPTCHA。保持缓存、人工状态、namespace 和 POLICY_VERSION；本轮仅虚构离线验证，完成后等待 supervisor，未运行 live production Search。
