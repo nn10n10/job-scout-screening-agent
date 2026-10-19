@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from scout_agent.cloud_app_policy import client_site_conflict
+from scout_agent.cloud_app_policy import client_site_conflict, confirmed_inhouse_workplace
 from scout_agent.indeed_search import IndeedSearchAdapter, SOURCES
 from scout_agent.llm.mock import MockClassifier
 from scout_agent.local_reprocess import reprocess_stored_scout
@@ -206,6 +206,16 @@ def test_location_field_uncertainty_overrides_product_and_office(location):
 
 
 @pytest.mark.parametrize('assignment,conflict,status', [
+    ('派遣ではありません。勤務先は案件により決定。', False, 'TARGET_UNCERTAIN'),
+    ('非派遣・プロジェクト先勤務の場合あり。', False, 'TARGET_UNCERTAIN'),
+    ('非派遣。', False, 'TARGET_UNCERTAIN'),
+    ('派遣ではありません。', False, 'TARGET_UNCERTAIN'),
+    ('自社オフィス勤務。勤務先は案件により決定。', False, 'TARGET_UNCERTAIN'),
+    ('自社オフィス勤務。非派遣・プロジェクト先勤務の場合あり。', False, 'TARGET_UNCERTAIN'),
+    ('自社オフィス勤務でAWS Lambdaを開発。客先常駐なし。', False, 'TARGET_CONFIRMED'),
+    ('当社のSES事業では客先常駐に配属する場合もありますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
+    ('当社のSES事業では客先常駐を担当しますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
+    ('当社には自社勤務の案件もありますが、今回の採用は客先常駐に配属します。', True, 'TARGET_REJECTED'),
     ('当社のSES事業では客先常駐勤務を行っていますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
     ('当社では客先常駐を含むSES事業も運営していますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
     ('客先常駐を行わない自社プロダクト開発です。', False, 'TARGET_UNCERTAIN'),
@@ -235,3 +245,12 @@ def test_client_site_clause_scope_through_real_entrypoints(platform, assignment,
     assert local.decision == ('local_skip' if conflict else 'classifier_candidate')
     if conflict:
         assert local.evaluation.verdict == 'SKIP'
+
+
+@pytest.mark.parametrize('workplace', [
+    '非派遣', '派遣ではありません', '派遣ではない',
+    '自社オフィス勤務。勤務先は案件により決定。',
+    '自社オフィス勤務。非派遣・プロジェクト先勤務の場合あり。',
+])
+def test_non_dispatch_is_not_workplace_confirmation(workplace):
+    assert not confirmed_inhouse_workplace(workplace)

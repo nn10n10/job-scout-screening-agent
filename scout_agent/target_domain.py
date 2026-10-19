@@ -193,7 +193,7 @@ def assess_target_domain(scout: Scout) -> TargetAssessment:
                         primary + "\n" + (scout.location_text or "")
                     ) else "TARGET_UNCERTAIN",
                     "CLOUD_APP_DEV", _brief_evidence(primary, app),
-                    "职责包含云服务开发；仅在自社勤務或非派遣工作方式明确时确认目标。",
+                    "职责包含云服务开发；仅在自社勤務或无客先常駐的工作地点明确时确认目标。",
                 )
             if not explicitly_noncloud and (_CLOUD.search(scout.jd_text or "") or not _INFRA_ACTION.search(primary) and not re.search(r"開発|実装", primary)):
                 uncertain = TargetAssessment("TARGET_UNCERTAIN", "CLOUD_APP_DEV", "", "开发岗位的云职责或配属尚不明确。")
