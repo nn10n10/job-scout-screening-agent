@@ -203,3 +203,35 @@ def test_location_field_uncertainty_overrides_product_and_office(location):
                   location_text=location)
     assert assess_target_domain(scout).status == 'TARGET_UNCERTAIN'
     assert MockClassifier().classify(scout).verdict == 'MAYBE'
+
+
+@pytest.mark.parametrize('assignment,conflict,status', [
+    ('当社のSES事業では客先常駐勤務を行っていますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
+    ('当社では客先常駐を含むSES事業も運営していますが、今回の採用は自社オフィス勤務です。', False, 'TARGET_CONFIRMED'),
+    ('客先常駐を行わない自社プロダクト開発です。', False, 'TARGET_UNCERTAIN'),
+    ('客先常駐は原則ありません。', False, 'TARGET_UNCERTAIN'),
+    ('客先常駐のない自社製品開発です。', False, 'TARGET_CONFIRMED'),
+    ('SESなし。本職は派遣先勤務。', True, 'TARGET_REJECTED'),
+    ('本募集は客先常駐勤務。', True, 'TARGET_REJECTED'),
+    ('SES案件に配属。', True, 'TARGET_REJECTED'),
+    ('客先常駐なしの案件もあるが本募集は客先常駐で勤務。', True, 'TARGET_REJECTED'),
+    ('派遣先勤務。', True, 'TARGET_REJECTED'),
+    ('客先常駐を行わない案件もあるが本職は派遣先勤務。', True, 'TARGET_REJECTED'),
+    ('客先常駐は原則ありません。本募集は客先常駐勤務。', True, 'TARGET_REJECTED'),
+])
+@pytest.mark.parametrize('platform', ['type', 'doda', 'mynavi'])
+def test_client_site_clause_scope_through_real_entrypoints(platform, assignment, conflict, status):
+    # All text is fictional. Product ownership alone must not confirm workplace.
+    duties = assignment + '自社製品の AWS Lambda/API Gateway を開発。'
+    scout = Scout(platform=platform, job_title='Backend Engineer', jd_text=duties)
+    assert client_site_conflict(assignment) is conflict
+    assert bool(detail_drop({'responsibilities': duties})) is conflict
+    assert assess_target_domain(scout).status == status
+    result = MockClassifier().classify(scout)
+    assert result.verdict == {'TARGET_CONFIRMED': 'KEEP', 'TARGET_UNCERTAIN': 'MAYBE',
+                              'TARGET_REJECTED': 'SKIP'}[status]
+    assert result.client_site is (True if conflict else None)
+    local = reprocess_stored_scout(scout)
+    assert local.decision == ('local_skip' if conflict else 'classifier_candidate')
+    if conflict:
+        assert local.evaluation.verdict == 'SKIP'

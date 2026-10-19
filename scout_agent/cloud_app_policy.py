@@ -27,11 +27,14 @@ def confirmed_inhouse_workplace(text: str) -> bool:
 def client_site_conflict(text: str) -> bool:
     # Sentence/clause scope prevents a company history or a negation from
     # either creating a conflict or hiding a later explicit role assignment.
-    for clause in re.split(r'[。\n；;]|[、,](?=本募集|本職|本ポジション|当ポジション)|(?=本募集|本職|本ポジション|当ポジション)', text):
-        clause = re.sub(r'(?:客先|顧客先|クライアント先)常駐(?:は|が)?(?:一切)?(?:なし|無し|ありません|しない|ではない|ゼロ|のない)|SES\s*(?:なし|ではない|ではありません)', '', clause, flags=re.I)
-        # Only business descriptions, not a concrete hire/assignment, are exempt.
-        if (re.search(r'(?:当社|弊社|会社|企業|会社紹介|沿革).*(?:SES|常駐).*(?:事業|運営|展開)|(?:SES|常駐).*事業も|(?:過去|以前).*(?:SES|常駐)', clause, re.I)
-                and not re.search(r'本募集|本職|本ポジション|当ポジション|配属|勤務|担当', clause)):
+    for clause in re.split(r'[。\n；;]|[、,](?=本募集|本職|本ポジション|当ポジション|今回の採用)|(?=本募集|本職|本ポジション|当ポジション|今回の採用)', text):
+        # Remove only the negated mention, preserving affirmative evidence elsewhere.
+        # 原則ありません is not a conflict or proof of an in-house workplace.
+        clause = re.sub(r'(?:客先|顧客先|クライアント先)常駐(?:は|が)?(?:一切|原則)?(?:なし|無し|ありません|しない|ではない|ゼロ|のない|を行わない)|SES\s*(?:なし|ではない|ではありません)', '', clause, flags=re.I)
+        # Company descriptions may themselves say 勤務. Only role/assignment
+        # evidence cancels that exemption; the current hire is a separate clause.
+        if (re.search(r'(?:当社|弊社|会社|企業|会社紹介|沿革).*(?:(?:SES|常駐).*(?:事業|運営|展開)|SES事業.*常駐)|(?:SES|常駐).*事業も|(?:過去|以前).*(?:SES|常駐)', clause, re.I)
+                and not re.search(r'本募集|本職|本ポジション|当ポジション|今回の採用|配属|担当', clause)):
             continue
         if re.search(r'(?:客先|顧客先|クライアント先)常駐|派遣先(?:勤務|で勤務|に勤務)|SES\s*案件(?:に|へ)?配属|(?:案件|プロジェクト).{0,15}客先.{0,12}(?:勤務|常駐)|SES事業で顧客プロジェクトに配属|案件選択制で客先|案件配属制で顧客|客户项目配属为主', clause, re.I):
             return True
