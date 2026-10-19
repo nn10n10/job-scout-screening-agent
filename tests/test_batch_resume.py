@@ -88,7 +88,7 @@ def test_codex_classify_many_one_exec_and_reordered_ids(monkeypatch):
 
     def fake_run(command, **kwargs):
         commands.append(command)
-        assert "primary job responsibility" in kwargs["input"]
+        assert "main duties OR evidenced substantive cloud application development" in kwargs["input"]
         assert "AWS/Terraform/CI/CD keywords alone are insufficient" in kwargs["input"]
         assert "--output-schema" not in command  # Direct array; Structured Outputs requires object root.
         assert 'model_reasoning_effort="low"' in command

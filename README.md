@@ -12,7 +12,7 @@ adapter 基于既有 probe 与 supervisor 提供的公开路由证据实现，�
 
 LAPRAS 已接入 Search adapter、CLI Search 和 WebUI，读取 `/jobs/home` 第一页及 numeric 职位详情。列表尚无 numeric 链接时，仅在同页最多等待 4 次、每次 500ms 并重新读取；耗尽仍安全停止，不推定空结果。详情结构合法但缺标题或职责时，同页最多重读 4 次，每次等待 500ms，并校验导航与同职位 canonical；耗尽才输出脱敏诊断并安全停止。document.title 单独存在不代表详情就绪。WebUI 隐藏 LAPRAS 分页数字字段，固定扫描第一页；live 验收待 supervisor 确认。
 
-Type 已接入单页多 source Search：`python -m scout_agent search type`，默认扫描 `サーバ・クラウド（設計・構築）`（`https://type.jp/job-1/1004/22/`）和 `DevOps・SRE`（`https://type.jp/job-1/1006/161/`）两个已验证职种页的第一页。source navigation 仅接受当前 source 的 exact URL；`/job/search/` 仅为 search-entry。只采集 exact `/job-<category>/<job>_detail/` 并验证同路径 canonical，跨 source 按组合 identity 去重。WebUI 显示两个默认选中的 source checkbox、Type badge 和原始链接，隐藏分页字段；分页后缀尚未验证，不推进游标。Search recall-first 与 POLICY_VERSION 不变，真实 CLI / WebUI 验收仍待 supervisor。
+Type 已接入单页多 source Search：`python -m scout_agent search type`，默认扫描 `サーバ・クラウド（設計・構築）`（`https://type.jp/job-1/1004/22/`）和 `DevOps・SRE`（`https://type.jp/job-1/1006/161/`）两个已验证职种页的第一页。source navigation 仅接受当前 source 的 exact URL；`/job/search/` 仅为 search-entry。只采集 exact `/job-<category>/<job>_detail/` 并验证同路径 canonical，跨 source 按组合 identity 去重。WebUI 显示两个默认选中的 source checkbox、Type badge 和原始链接，隐藏分页字段；分页后缀尚未验证，不推进游标。Search 保持 recall-first；当前 POLICY_VERSION 见 TASK-015，真实 CLI / WebUI 验收仍待 supervisor。
 在已登录 Chrome 中手动打开 LAPRAS 职位列表/推荐页及一个职位详情页后，使用
 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform lapras`。
 无需提供真实职位 URL；probe 仅读取既有标签页，不导航、点击、刷新或登录。
@@ -133,7 +133,7 @@ python -m scout_agent evaluate --platform green --replace-provider mock
 
 没有显式选择 Gemini 时，不会因为 `GEMINI_API_KEY` 存在而切换 provider。Gemini 使用官方 `google-genai` SDK，以 Pydantic `Evaluation` 作为 structured output。数据库为每次评价记录 provider、model name、evaluated_at；HTML/JSON 报告也显示模型。筛选规则位于 `scout_agent/prompts/screening_rules.txt`；结果仍需人工复核。
 
-KEEP 的必要条件是 Cloud/Infrastructure/Platform/DevOps/SRE 等属于岗位主要职责之一，不能仅凭 AWS、Terraform、CI/CD 等关键词判定。若 Web/Backend/Frontend、PM/Leader 或 Presales 是主责，Cloud/Infra 只是附带工作，通常判 MAYBE；有明确目标冲突才判 SKIP。Mock 使用保守的职位名称启发式，无法理解任意 JD 中的职责比例，因此结果必须人工复核；Codex/Gemini 会依据职位描述判断实际主责。
+Cloud/Infrastructure/Platform/DevOps/SRE 主责仍优先。Backend/Server-side/Full-stack 或云上应用开发也可 KEEP/TARGET：须引用 JD 实际职责中云服务开发、实现或部署的证据（AWS 托管后端、Lambda/API Gateway/DynamoDB、ECS/EKS、云原生服务等），不要求亲自管理基础设施。仅技术标签、职责不清或自社勤務/客先配属未知则 MAYBE/POSSIBLE；明确纯非云开发不提升。岗位明确客先常駐、派遣先勤務或 SES 案件配属必须 SKIP/DROP，优先于技术匹配；客先常駐なし / SESなし不可误伤，公司有 SES 业务不代表本岗位驻场，在自社办公室受托开发也不等同驻场。保留日语主、450万底线/500万期望、Remote/Hybrid、无强制 Casual、K8s 非必要的既有偏好。
 
 新评价的 `summary`、`reasons`、`concerns` 说明文字须为简体中文；公司名、职位名、技术术语保留原文。明显没有中文说明的模型输出会报错，不会写入数据库。旧评价不会自动改写；请用 `--replace-provider` 定向更新。
 
@@ -156,7 +156,7 @@ Green 一览页是 `https://www.green-japan.com/messages/v2`。适配器从实�
 CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform type
 ```
 
-type 一览页为 `https://type.jp/scout/`。第一阶段只读列表，默认最多检查 100 条可见 message（`LIST_SCAN_LIMIT=100`），逐个独立职位标题做 `TITLE_SKIP`、`TITLE_REVIEW`、`DETAIL` 三档本地预筛。明显非 IT/非 Cloud-Infra 的职种直接跳过；Backend、社内 SE、Consulting、Security 等相邻岗位进入复核；Cloud/Infra/SRE 等明确相关或 `ITエンジニア`、`SE` 等泛化标题进入详情。同一 offer 已有明确核心岗位时，其泛化/相邻岗位可因 offer 上下文跳过。多个“還元率／案件選択制／単価連動”等案件信号可排除泛化 IT/SE/开发标题，但含 Cloud/クラウド、Infra/インフラ、SRE、DevOps、Platform、AWS、Network/ネットワーク、Server/サーバー 等目标信号的职位仍进入详情；SES/客先常駐风险只在读取 JD 后按明确证据做本地 hard rule 判断。列表没有可靠时刻，`received_on` 保存日期，`received_at` 保持 `null`。默认跳过超过 14 天的记录（`SCOUT_MAX_AGE_DAYS=14`）；连续 30 个已处理 message ID 才提前停止（`SEEN_STOP_THRESHOLD=30`）。当前观察到的列表没有分页控件，不追溯完整历史。
+type 一览页为 `https://type.jp/scout/`。第一阶段只读列表，默认最多检查 100 条可见 message（`LIST_SCAN_LIMIT=100`），逐个独立职位标题做 `TITLE_SKIP`、`TITLE_REVIEW`、`DETAIL` 三档本地预筛。明显非 IT/非 Cloud-Infra 的职种直接跳过；Backend、社内 SE、Consulting、Security 等相邻岗位进入复核；Cloud/Infra/SRE 等明确相关或 `ITエンジニア`、`SE` 等泛化标题进入详情。同一 offer 已有明确核心岗位时，其泛化/相邻岗位可因 offer 上下文跳过，但开发岗位保留详情复核。多个“還元率／案件選択制／単価連動”等案件信号可排除泛化 IT/SE/开发标题，但含 Cloud/クラウド、Infra/インフラ、SRE、DevOps、Platform、AWS、Network/ネットワーク、Server/サーバー 等目标信号的职位仍进入详情；SES/客先常駐风险只在读取 JD 后按明确证据做本地 hard rule 判断。列表没有可靠时刻，`received_on` 保存日期，`received_at` 保持 `null`。默认跳过超过 14 天的记录（`SCOUT_MAX_AGE_DAYS=14`）；连续 30 个已处理 message ID 才提前停止（`SEEN_STOP_THRESHOLD=30`）。当前观察到的列表没有分页控件，不追溯完整历史。
 
 第二阶段仅为新候选打开 message 详情，通过已观察到的职位链接文本对应列表标题，只读取保留职位的职位页/JD；无法可靠匹配的链接保守读取，避免误跳过。独立 job ID 用 `offer/message ID + job ID` 保存为独立 Scout，不拼接不同 JD。只有真正送进 classifier 的 Scout 才消耗模型额度；已处理 message 不打开详情且为 0 token。每次扫描的 `scan_audit` 表逐职位保存 run ID、平台、external ID、公司、标题、决定、原因、是否读取详情和已见状态；列表阶段尚无 job ID 时使用明确的 `message ID:list:序号` 临时 ID，详情确认后换成 job ID。报告会列出列表、已见、三档预筛、详情和 KEEP/MAYBE/SKIP 计数。详情页只导航读取，新打开的详情可能自然变为已读；不会主动点击标记已读、応募、收藏或发送消息。`scout_kind` 可依据已观察到的详情链接区分；无明确依据时 `sender_kind`、`is_bulk_like` 为 `null`。
 
@@ -168,7 +168,7 @@ type 一览页为 `https://type.jp/scout/`。第一阶段只读列表，默认�
 CLASSIFIER_PROVIDER=mock python -m scout_agent scan --platform doda
 ```
 
-实际入口是 `https://doda.jp/dcfront/referredJob/interviewOfferList/`，不是公开的 `/scout/` 介绍页。扫描用只读 GET `?sort_id=1` 选择「受信日が新しい順」；网站默认 `sort_id=7` 是「マッチ順」。列表每张企业オファー卡片提供 `message_id` 和独立 `jid`；去重键是两者组合。最多读取最近 100 个职位，先用列表标题做 `TITLE_SKIP`／`TITLE_REVIEW`／`DETAIL` 预筛；只有候选才打开オファー详情和关联 JD。列表的宣传标题不一定等于实际职位名称，详情读取后会以 JD 的 `occupationName` 更新 audit。详情后的 `DETAIL_LOCAL_SKIP` 只使用真实职位标题和结构化 JD 主职责，在 hard rule/classifier 前以 0 token 排除明确非目标职种，以及明确以 Application/Web/System、組込/モビリティ、QA/Test、Helpdesk/技术支持或 IT 业务支援为主的岗位；泛化 IT 标题在职责仍不明确时保留。明确的 Cloud/Infra/Platform/SRE/DevOps 目标岗位不会因 SES 宣传词在这一步被排除。报告和 `scan_audit` 分别记录排除数量、公司、真实职位标题与原因，并保留原始 `list_title` 供复核。14 天年龄限制优先依据网站显示的「受信日から N 日経過」；列表只显示応募截止时间时，到详情复核接收年龄，仍无法确认年龄就不分类。连续 30 个已处理 ID 且没有待续跑条目时可提前停止。所有标题跳过和详情结果都记入 SQLite 与逐次 `scan_audit`，第二次扫描不重复分类。
+实际入口是 `https://doda.jp/dcfront/referredJob/interviewOfferList/`，不是公开的 `/scout/` 介绍页。扫描用只读 GET `?sort_id=1` 选择「受信日が新しい順」；网站默认 `sort_id=7` 是「マッチ順」。列表每张企业オファー卡片提供 `message_id` 和独立 `jid`；去重键是两者组合。最多读取最近 100 个职位，先用列表标题做 `TITLE_SKIP`／`TITLE_REVIEW`／`DETAIL` 预筛；只有候选才打开オファー详情和关联 JD。列表的宣传标题不一定等于实际职位名称，详情读取后会以 JD 的 `occupationName` 更新 audit。详情后的 `DETAIL_LOCAL_SKIP` 只使用真实职位标题和结构化 JD 主职责，在 hard rule/classifier 前以 0 token 排除明确非目标职种，以及明确纯非云的 Application/Web/System、組込/モビリティ、QA/Test、Helpdesk/技术支持或 IT 业务支援为主的岗位；泛化 IT 标题在职责仍不明确时保留。明确的 Cloud/Infra/Platform/SRE/DevOps 目标岗位不会因 SES 宣传词在这一步被排除。报告和 `scan_audit` 分别记录排除数量、公司、真实职位标题与原因，并保留原始 `list_title` 供复核。14 天年龄限制优先依据网站显示的「受信日から N 日経過」；列表只显示応募截止时间时，到详情复核接收年龄，仍无法确认年龄就不分类。连续 30 个已处理 ID 且没有待续跑条目时可提前停止。所有标题跳过和详情结果都记入 SQLite 与逐次 `scan_audit`，第二次扫描不重复分类。
 
 目前只支持已观察到的「企業からのオファー」。可确认 `sender_kind=company`，带明确「プレミアムオファー」标签时记为 `premium_offer`；`is_bulk_like` 没有可靠证据时为 `null`。「パートナーエージェントからのスカウト」页面当前无可观察条目，暂不猜测其 DOM。详情导航可能自然变为已读，但不会主动执行已读、応募、收藏或其他账号操作。
 
@@ -399,10 +399,10 @@ NEW 0、KNOWN 增加也是正常增量结果。失败只显示安全类别，可
 服务仅绑定 127.0.0.1，POST 要求页面随机 CSRF token，不自动打开浏览器。
 
 
-LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/home` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用缓存与本地人工状态，POLICY_VERSION 不变。本次隔离开发不做 live 浏览器验证。
+LAPRAS active Search 已实现：`python -m scout_agent search lapras`，WebUI 可选择 LAPRAS / 求人検索。当前仅扫描已 live 验证的 `https://lapras.com/jobs/home` 第一页，不推进来源游标。唯一稳定 identity 是 numeric `/jobs/<id>`，保存为 `lapras:<id>`；slug link 暂不持久化，无 numeric 职位时安全停止。详情要求同 numeric canonical、title 与职责白名单字段；分页尚未验证，不生成 page/cursor URL，后续取得真实分页证据后再扩展。复用本地人工状态；缓存按 TASK-015 的新 POLICY_VERSION 隔离。本次隔离开发不做 live 浏览器验证。
 
 
-Findy active Search 使用已验证的推荐列表与分页：`python -m scout_agent search findy`，WebUI 来源为 `おすすめ求人`，每轮深页数与最大扫描页可编辑。职位身份为 `findy:<company_id>:<job_key>`，游标为 `findy:おすすめ求人`，独立于其他平台。仅接受 strict Findy detail URL；列表与详情各最多同页等待 4×500ms，身份、canonical、登录或页面结构异常立即安全停止。详情仅解析可见 h1 与固定语义字段，不使用正文兜底。POLICY_VERSION 与历史评价保持不变。
+Findy active Search 使用已验证的推荐列表与分页：`python -m scout_agent search findy`，WebUI 来源为 `おすすめ求人`，每轮深页数与最大扫描页可编辑。职位身份为 `findy:<company_id>:<job_key>`，游标为 `findy:おすすめ求人`，独立于其他平台。仅接受 strict Findy detail URL；列表与详情各最多同页等待 4×500ms，身份、canonical、登录或页面结构异常立即安全停止。详情仅解析可见 h1 与固定语义字段，不使用正文兜底。历史评价保留；当前 POLICY_VERSION 见 TASK-015。
 
 本次实现仅完成虚构数据离线验证；CLI / WebUI live 验收及 supervisor APPROVED 仍待授权环境完成。
 
@@ -411,7 +411,7 @@ Findy Stage B.1 仅补充只读 detail structure diagnostic，正式职责 parse
 手动 probe 可使用 `python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform findy`：只 evaluate 已打开标签页，仅 exact `/companies/<numeric>/jobs/<opaque>` 附加同一脱敏结构，不导航或自动登录。等待 supervisor review 后，由用户在授权环境运行同一小预算 CLI 获取 live diagnostic；桥不做 live。
 
 
-doda 主动 Search：`python -m scout_agent search doda --keyword インフラエンジニア`。首版仅使用已验证的广义职种来源与 `-page__N/` 分页，WebUI 默认勾选该来源并显示分页设置、doda badge 和经身份校验的外部链接。候选身份 `doda:<jid>`、游标 `doda:インフラエンジニア` 与 Scout/其它平台隔离，沿用 recall-first、缓存及人工状态，POLICY_VERSION 不变。详情仅从 NEXT_DATA 结构化字段提取，route/canonical/jid 不一致或缺少标题、职责时安全停止；不复用 Scout 严筛。本次仅虚构数据验证，真实 CLI、缓存复跑和 WebUI 验收待 supervisor。
+doda 主动 Search：`python -m scout_agent search doda --keyword インフラエンジニア`。首版仅使用已验证的广义职种来源与 `-page__N/` 分页，WebUI 默认勾选该来源并显示分页设置、doda badge 和经身份校验的外部链接。候选身份 `doda:<jid>`、游标 `doda:インフラエンジニア` 与 Scout/其它平台隔离，沿用 recall-first、缓存及人工状态，当前 POLICY_VERSION 见 TASK-015。详情仅从 NEXT_DATA 结构化字段提取，route/canonical/jid 不一致或缺少标题、职责时安全停止；不复用 Scout 严筛。本次仅虚构数据验证，真实 CLI、缓存复跑和 WebUI 验收待 supervisor。
 
 マイナビ転職 当前仅支持 Stage A.1 只读 discovery，尚未接入主动 Search adapter。由用户手动登录并打开搜索结果、普通求人详情及第二页后，可在授权环境运行：
 
@@ -422,7 +422,7 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
 
 输出仅包含固定结构：exact `/jobinfo-:id4/` 与 `/job/:segment/` anchor 计数、allowlist tracking key presence、脱敏 source shape、final `/pg<digits>/` 分页候选以及普通详情 DOM bool。只有 current 与 same-origin canonical 的四段 ID 完全一致，才报告 `jobinfo-id4` 身份候选；该候选尚未用于 production。登录、加载或快照异常 fail-closed；不输出真实 ID、criteria、query value、公司、职位或 JD。Bridge/tests 仅用虚构数据，live 结果须等待 supervisor review 后再确定下一阶段。
 
-マイナビ転職 主动 Search：`python -m scout_agent search mynavi --keyword インフラエンジニア`。仅启用已验证的 `/engineer/list/o166/` 来源及 `/pgN/` 分页。职位身份 `mynavi:<四段ID>`，游标 `mynavi:インフラエンジニア`；tracking query/fragment 不保存。详情仅读取固定局部 selector，current/canonical 身份漂移、登录失效或缺少标题/职责时安全停止。保持 recall-first、缓存、人工状态和 POLICY_VERSION，不复用 Scout 严筛。WebUI 支持来源恢复、分页设置及经身份验证的 マイナビ転職 外链。本次仅虚构数据验证，真实验收待 supervisor。
+マイナビ転職 主动 Search：`python -m scout_agent search mynavi --keyword インフラエンジニア`。仅启用已验证的 `/engineer/list/o166/` 来源及 `/pgN/` 分页。职位身份 `mynavi:<四段ID>`，游标 `mynavi:インフラエンジニア`；tracking query/fragment 不保存。详情仅读取固定局部 selector，current/canonical 身份漂移、登录失效或缺少标题/职责时安全停止。保持 recall-first、历史缓存和人工状态；新政策使用独立 POLICY_VERSION，不复用 Scout 严筛。WebUI 支持来源恢复、分页设置及经身份验证的 マイナビ転職 外链。本次仅虚构数据验证，真实验收待 supervisor。
 
 Indeed Japan 当前仅支持 Stage A.1 只读 discovery；尚无 production Search adapter、CLI search 或 WebUI 平台。等待 supervisor 后，由用户在现有 9222 Chrome 手动打开实际搜索结果、1–2 个普通详情和下一页，保持 tabs 打开，再在授权环境运行：
 
@@ -435,3 +435,10 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
 
 Active Search 现支持 8 个平台：Green、Forkwell、LAPRAS、Findy、Type、doda、マイナビ転職、Indeed。
 Indeed：`python -m scout_agent search indeed --keyword インフラエンジニア`，默认 recall-first 扫描 インフラエンジニア、クラウドエンジニア、SRE、DevOps 四个关键词，不固定 location。目前 page1-only，不推测 start offset、不推进分页游标。职位身份为 `indeed:<jk>`；只保存严格 canonical `/viewjob?jk=<jk>`，tracking 链接不持久化。详情使用 JobPosting 固定字段及已验证局部 DOM fallback，读取前后校验 current/canonical/jk；challenge、登录、加载、漂移、缺标题或职责均安全停止，不绕过 CAPTCHA。保持缓存、人工状态、namespace 和 POLICY_VERSION；本轮仅虚构离线验证，完成后等待 supervisor，未运行 live production Search。
+
+
+TASK-015：Search 使用 `cloud-app-search-0.2.0` 缓存版本，历史评价与手动状态保留，不自动重算 Scout。开发子类别为 `CLOUD_APP_DEV`。仅 Indeed 的已验证关键词参数增加 AWS Backend、云原生开发、AWS Full-stack 三个来源，继续 page1-only、`indeed:<jk>` 去重；WebUI/sessionStorage/CLI 默认来源同步。其他七个平台沿用已验证入口，新增路由留待 discovery；开发岗位不再因职种本身被本地预筛排除。
+
+历史 Scout 复核：先以 `python -m scout_agent reprocess --help` 查看本地重筛参数，再用目标平台及 `--dry-run` 审查；模型重评必须显式选择记录/provider，使用 `--replace-provider`，不得默认批量 `--force` 或覆写已完成 Codex 评价。此次开发未读取或修改真实数据。
+
+例如仅预览 doda 的旧 mock 候选：`python -m scout_agent reprocess --platform doda --dry-run`；审查后显式执行 `python -m scout_agent reprocess --platform doda`，再用 `python -m scout_agent evaluate --platform doda --eligible-only --replace-provider mock --dry-run` 检查选择范围。确认模型配置及记录后才移除最后一个 `--dry-run`。`--replace-provider mock` 不选择已有 Codex 评价；没有默认自动重算。

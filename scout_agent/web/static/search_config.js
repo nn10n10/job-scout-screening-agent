@@ -30,7 +30,7 @@ const SearchConfig = (() => {
     try {
       const data = JSON.parse(sessionStorage.getItem(key));
       if (data && ['green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi', 'indeed'].includes(data.platform) && form.elements?.platform) {
-        const labels = data.platform === 'indeed' ? ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps'] : ['doda', 'mynavi'].includes(data.platform) ? ['インフラエンジニア'] : data.platform === 'type' ? ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'] : data.platform === 'findy' ? ['おすすめ求人'] : data.platform === 'lapras' ? ['求人検索'] : data.platform === 'forkwell' ? ['求人一覧'] : sources(form);
+        const labels = data.platform === 'indeed' ? ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps', 'AWS バックエンドエンジニア', 'クラウドネイティブ 開発', 'AWS フルスタックエンジニア'] : ['doda', 'mynavi'].includes(data.platform) ? ['インフラエンジニア'] : data.platform === 'type' ? ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'] : data.platform === 'findy' ? ['おすすめ求人'] : data.platform === 'lapras' ? ['求人検索'] : data.platform === 'forkwell' ? ['求人一覧'] : sources(form);
         if (!validate(data, labels, limits)) return;
         form.elements.platform.value = data.platform;
         renderSources?.();

@@ -11,10 +11,11 @@ import re
 from typing import Literal
 
 from scout_agent.models.scout import Scout
+from scout_agent.cloud_app_policy import CLOUD_APP_DUTY, INHOUSE, NONCLOUD, client_site_conflict, development_candidate
 
 
 TargetStatus = Literal["TARGET_CONFIRMED", "TARGET_UNCERTAIN", "TARGET_REJECTED"]
-TargetCategory = Literal["CLOUD", "PLATFORM", "SRE", "DEVOPS", "MODERN_INFRA", "NONE"]
+TargetCategory = Literal["CLOUD", "PLATFORM", "SRE", "DEVOPS", "MODERN_INFRA", "CLOUD_APP_DEV", "NONE"]
 
 
 @dataclass(frozen=True)
@@ -137,7 +138,7 @@ def _primary_sections(scout: Scout) -> tuple[str, ...]:
         if heading:
             section = section[heading.end():]
         section = _PROJECT_EXAMPLE_HEADING.split(section, maxsplit=1)[0]
-        section = re.split(r"(?:^|\n)(?:開発環境・業務範囲|応募資格|求める人物像)",
+        section = re.split(r"(?:^|\n)(?:開発環境・業務範囲|応募資格|求める人物像|開発環境|技術スタック|必須要件|歓迎要件|Technology|Requirements)",
                            section, maxsplit=1)[0]
         primary.append(section[:1200])
     return tuple(primary)
@@ -161,13 +162,15 @@ def _has_duty_action(text: str, match: re.Match[str] | None) -> bool:
 
 
 def assess_target_domain(scout: Scout) -> TargetAssessment:
-    """Require evidenced modern Cloud/Platform/SRE/DevOps as a main duty.
+    """Require evidenced modern cloud/platform duties or cloud application work.
 
     A role title or tool name alone never confirms the domain. Ambiguous mixed
     assignments stay UNCERTAIN; distinct multi-job duty sections may be
     confirmed independently when one is explicitly a target role.
     """
     title = scout.job_title or ""
+    if client_site_conflict((scout.jd_text or "") + "\n" + (scout.location_text or "")):
+        return TargetAssessment("TARGET_REJECTED", "NONE", "", "本岗位明确要求客先常駐或派遣配属。")
     sections = tuple(section for section in _primary_sections(scout) if section.strip())
     if not sections:
         return TargetAssessment("TARGET_UNCERTAIN", "NONE", "", "缺少可核实的 JD 主职责。")
@@ -175,6 +178,22 @@ def assess_target_domain(scout: Scout) -> TargetAssessment:
     for section in sections:
         primary = section[:1050]
         role = title if len(sections) == 1 else section.splitlines()[0][:180]
+        explicitly_noncloud = bool(NONCLOUD.search(primary))
+        app = None if explicitly_noncloud else CLOUD_APP_DUTY.search(primary)
+        if development_candidate(role, primary):
+            if app:
+                return TargetAssessment(
+                    "TARGET_CONFIRMED" if (
+                        INHOUSE.search(primary + (scout.location_text or ""))
+                        and not re.search(r"(?:配属|勤務地|担当業務).{0,20}(?:未定|入社後|決定|不明)", primary)
+                    ) else "TARGET_UNCERTAIN",
+                    "CLOUD_APP_DEV", _brief_evidence(primary, app),
+                    "职责包含云服务开发；仅在自社勤務或非派遣工作方式明确时确认目标。",
+                )
+            if not explicitly_noncloud and (_CLOUD.search(scout.jd_text or "") or not _INFRA_ACTION.search(primary) and not re.search(r"開発|実装", primary)):
+                uncertain = TargetAssessment("TARGET_UNCERTAIN", "CLOUD_APP_DEV", "", "开发岗位的云职责或配属尚不明确。")
+        if explicitly_noncloud:
+            continue
         mixed = bool(_MIXED_ASSIGNMENT.search(primary))
         traditional = bool(_TRADITIONAL_MAIN.search((role + " " + primary[:280])))
         # A cloud tool in an application team's ancillary work, internal PC
@@ -248,4 +267,4 @@ def assess_target_domain(scout: Scout) -> TargetAssessment:
             _brief_evidence(project, example),
             "目标方向仅出现在项目例中，实际主职责或配属未确认。",
         )
-    return TargetAssessment("TARGET_REJECTED", "NONE", "", "现有 JD 主职责未显示现代云基础设施方向。")
+    return TargetAssessment("TARGET_REJECTED", "NONE", "", "现有 JD 主职责未显示现代云平台或实质云相关开发。")

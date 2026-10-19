@@ -114,7 +114,7 @@ def test_doda_detail_prefilter_requires_primary_cloud_duty_not_incidental_aws():
     primary = incidental.model_copy(update={
         "jd_text": "jobContentOutline: AWS 基盤の設計・構築を主担当として進めます。"
     })
-    assert doda_detail_prefilter(incidental) is not None
+    assert doda_detail_prefilter(incidental) is None
     assert doda_detail_prefilter(primary) is None
 
 
@@ -127,7 +127,10 @@ def test_doda_detail_prefilter_requires_primary_cloud_duty_not_incidental_aws():
 ])
 def test_doda_generic_it_skips_only_when_structured_jd_main_duty_is_clear(title, outline, expected):
     scout = Scout(platform="doda", job_title=title, jd_text=f"jobContentOutline: {outline}")
-    assert expected in doda_detail_prefilter(scout)
+    if "クラウド上で開発" in outline:
+        assert doda_detail_prefilter(scout) is None
+    else:
+        assert expected in doda_detail_prefilter(scout)
     assert doda_detail_prefilter(scout.model_copy(update={"jd_text": "職務内容は面談で説明。"})) is None
 
 
@@ -235,13 +238,12 @@ def test_doda_two_stage_scan_skips_non_target_and_dedupes_without_model(tmp_path
         assert [(row["decision"], row["detail_fetched"]) for row in audit] == [
             ("TITLE_SKIP", 0), ("TITLE_REVIEW", 1), ("DETAIL", 1),
         ]
-        assert {row[0] for row in db.conn.execute("SELECT DISTINCT provider FROM evaluations")} == {"mock", "local"}
-        assert audit[1]["detail_decision"] == "DETAIL_LOCAL_SKIP"
-        assert "Backend" in audit[1]["detail_reason"]
+        assert {row[0] for row in db.conn.execute("SELECT DISTINCT provider FROM evaluations")} == {"mock"}
+        assert audit[1]["detail_decision"] != "DETAIL_LOCAL_SKIP"
         assert db.conn.execute(
             "SELECT model_name FROM evaluations e JOIN scouts s ON s.id=e.scout_id "
             "WHERE s.external_id=?", (review.external_id,)
-        ).fetchone()[0] == "doda-detail-prefilter"
+        ).fetchone()[0] == "mock"
     monkeypatch.setattr(cli, "_classifier", lambda _settings: (_ for _ in ()).throw(
         AssertionError("seen doda offer must consume zero classifier tokens")
     ))

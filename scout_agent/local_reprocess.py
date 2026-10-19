@@ -7,6 +7,7 @@ from typing import Callable, Literal
 
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
+from scout_agent.cloud_app_policy import client_site_conflict
 from scout_agent.platforms.doda import doda_detail_prefilter
 from scout_agent.platforms.mynavi import (
     mynavi_detail_prefilter, mynavi_primary_target_duty, mynavi_ses_hard_rule,
@@ -121,6 +122,12 @@ def reprocess_stored_scout(scout: Scout) -> LocalResult:
     """Return a local decision without browser or model access."""
     if not scout.jd_text or not scout.jd_text.strip():
         raise ValueError("Stored Scout has no complete JD")
+    if client_site_conflict((scout.jd_text or "") + "\n" + (scout.location_text or "")):
+        evaluation = Evaluation(
+            verdict="SKIP", confidence=0.95, summary="本岗位明确要求客先常駐或派遣配属。",
+            reasons=["岗位驻场硬红线优先于云开发匹配。"], concerns=[], client_site=True,
+        )
+        return LocalResult("local_skip", evaluation.summary, evaluation, "client-site-hard-rule")
     try:
         rules = LOCAL_RULES[scout.platform]
     except KeyError as exc:
