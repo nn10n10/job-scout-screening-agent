@@ -458,7 +458,7 @@ python -m scout_agent search indeed --source-preset all
 python -m scout_agent search indeed --keyword バックエンドエンジニア --keyword サーバーサイドエンジニア
 ```
 
-WebUI 的 Indeed 扫描范围提供「云相关开发」「Cloud/Infra」「全部」预设，可继续逐项勾选；sessionStorage 保存实际选中来源，后端按当前平台独立白名单校验。预设不会启动扫描。CLI 与 WebUI 都在混合选择时按通用开发三来源、原云开发三来源、Infra 的顺序执行（仅保留选中项），因此此前 Infra 不会抢先耗尽详情/模型预算或触发 early_stop。仅开发也优先通用三职种，仅 Infra 时保留选择顺序。预算仍共享，极小预算不能保证扫描所有来源；想确认某一职种应独立选择该来源。默认增量模式会跳过已缓存职位并继续尝试后续开发来源；兼容固定页模式维持原有详情读取/early_stop 行为。
+WebUI 的 Indeed 扫描范围提供「云相关开发」「Cloud/Infra」「全部」预设，可继续逐项勾选；sessionStorage 保存实际选中来源，后端按当前平台独立白名单校验。预设不会启动扫描。CLI 与 WebUI 都在混合选择时按通用开发三来源、原云开发三来源、Infra 的顺序执行（仅保留选中项），因此此前 Infra 不会抢先耗尽详情/模型预算或触发 early_stop。仅开发也优先通用三职种，仅 Infra 时保留选择顺序。Indeed 每轮每来源最多读取一个详情，再轮转到下一来源；增量模式缓存命中、重复 jk 和列表排除不占详情轮次，空列表让出轮次，安全停止立即终止，不重试绕过。第一页仅获取一次，剩余卡片在后续轮次继续处理。三个通用开发来源均有有效候选且详情预算 >=3 时可各读取一个详情，六个开发来源均有候选且预算 >=6 时可覆盖六个来源；前提是未先触发安全停止或固定页 early_stop。预算仍共享，模型预算很小不保证每来源都有 AI 结果；想确认某一职种应独立选择该来源。默认增量模式会跳过已缓存职位并继续尝试后续开发来源；兼容固定页模式维持原有详情读取/early_stop 行为。
 
 这次只改变 source discovery 与选择优先级，`POLICY_VERSION` 保持 `cloud-app-search-0.2.1`，不批量重算历史、不改变人工状态。普通开发岗位不能仅凭来源名或技术栈确认为云开发；必须有实质云服务实现/部署职责，日语主、年收 >=450万、本岗位明确客先常驻/SES/派遣先勤務硬排除、地点/配属未知保持 MAYBE/POSSIBLE 等规则沿用 TASK-015。
 
@@ -471,3 +471,23 @@ WebUI 的 Indeed 扫描范围提供「云相关开发」「Cloud/Infra」「全�
 | Forkwell / LAPRAS / Findy | 保留现有通用/推荐列表 | 不宣称支持按新关键词搜索；筛选后的开发召回不等于新关键词来源 |
 
 新增 Indeed q 的实际成功也必须由用户在独立授权 Chrome 环境逐项只读 probe：确认 q 未漂移、无 challenge、第一页卡片 jk 与详情 canonical 一致，再由 supervisor 验收。本 Bridge worktree 不访问浏览器、招聘站或付费模型。
+
+
+#### Indeed：零数据库、零模型的独立 live discovery
+
+`search indeed --probe` **不支持**；请使用现有 `platform_discovery` 命令。以下步骤仅供用户在另行授权的 Chrome 环境执行，本轮开发不执行：
+
+1. 在已认证的 Chrome 中人工分别打开以下三个第一页（不要添加 `start`/offset）：
+   - `https://jp.indeed.com/jobs?q=バックエンドエンジニア`
+   - `https://jp.indeed.com/jobs?q=フルスタックエンジニア`
+   - `https://jp.indeed.com/jobs?q=サーバーサイドエンジニア`
+2. 人工确认每页地址中的 q 与所选标签一致；为每个来源人工打开一个合法详情 `/viewjob?jk=<jk>`，保留三个列表及三个详情标签页。不要应募、收藏或发送消息。遇到登录或 challenge，由用户手动处理，工具不绕过。
+3. 对已开启本机 CDP 的该 Chrome 执行（端口替换为实际本机端口）：
+
+```bash
+python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform indeed
+```
+
+该命令仅 evaluate 已打开的标签页（每平台最多十页），不导航、点击、刷新或登录，不打开 SQLite，不初始化分类器，模型额度为零。请确保三个来源及详情都在十页范围内，必要时逐组执行。退出码 0 仅说明结构读取无安全失败，不能单独证明新来源 live 成功。
+
+逐来源验收：列表须 `safe_failure_category=NONE`、`source_route=jobs-query`、`query_keys_present.q=true`、`jk_link_count>0`；人工确认 q 未漂移、仅第一页。详情须 `page_kind=detail`、`stable_identity_candidate=jk`、`canonical_pattern=/viewjob?jk=:id`，并确认标题/职责字段存在及列表卡片 jk 与详情一致。输出经过脱敏，不包含 q 值或真实 jk，因此必须保留人工逐来源对应关系，不能仅凭一组 JSON 宣称三个 q 均成功。canonical 不匹配时可能仍返回 `NONE`，但 identity/canonical 为空，此时不通过验收。任何 challenge、NEEDS_LOGIN、加载或字段缺失均停止验收。仅经独立成功证据与 supervisor 确认后才能标记 live verified。

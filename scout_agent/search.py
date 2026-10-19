@@ -288,11 +288,40 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
             accept(job, output[job.job_id], 'codex')
         pending.clear()
 
-    if getattr(adapter, 'platform_key', 'green') == 'indeed':
+    indeed = getattr(adapter, 'platform_key', 'green') == 'indeed'
+    if indeed:
         from scout_agent.indeed_search import prioritize_sources
         keywords = prioritize_sources(keywords)
+
+    def source_turns():
+        if not indeed:
+            for keyword in keywords:
+                yield keyword, None
+            return
+        # One detail per source per round. Incremental cache hits, duplicates
+        # and list-dropped cards do not consume a turn. Fetch each page lazily, once only;
+        # adapter safety exceptions propagate immediately without retry.
+        remaining = dict.fromkeys(keywords)
+        while remaining:
+            for keyword in list(remaining):
+                if progress is not None:
+                    progress(keyword, 1)
+                if remaining[keyword] is None:
+                    cards = adapter.search_cards(keyword, 1)
+                    stats['pages_scanned'] += 1
+                    stats['source_pages'][keyword] = [1]
+                    stats['raw_cards'] += len(cards)
+                    remaining[keyword] = iter(cards)
+                before = stats['details']
+                while stats['details'] == before:
+                    card = next(remaining[keyword], None)
+                    if card is None:
+                        del remaining[keyword]
+                        break
+                    yield keyword, [card]
+
     stop = False
-    for keyword in keywords:
+    for keyword, scheduled_cards in source_turns():
         source_key = source_identity(getattr(adapter, "platform_key", "green"), keyword)
         cursor = store.source_cursor(source_key, max_depth) if supports_pagination else 1
         if not supports_pagination:
@@ -303,12 +332,15 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
         else:
             pages = range(1, pages_per_keyword + 1)
         for page in pages:
-            if progress is not None:
-                progress(keyword, page)
-            cards = adapter.search_cards(keyword, page)
-            stats['pages_scanned'] += 1
-            stats['source_pages'].setdefault(keyword, []).append(page)
-            stats['raw_cards'] += len(cards)
+            if indeed:
+                cards = scheduled_cards
+            else:
+                if progress is not None:
+                    progress(keyword, page)
+                cards = adapter.search_cards(keyword, page)
+                stats['pages_scanned'] += 1
+                stats['source_pages'].setdefault(keyword, []).append(page)
+                stats['raw_cards'] += len(cards)
             page_complete = True
             for card in cards:
                 if hasattr(adapter, "validate_job"):

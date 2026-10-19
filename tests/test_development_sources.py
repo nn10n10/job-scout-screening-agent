@@ -199,3 +199,104 @@ console.log('three source presets select exact sources without starting searches
     selected = [argv[i + 1] for i, value in enumerate(argv) if value == '--keyword']
     assert selected == list(SOURCE_PRESETS['development'])
     assert not set(selected) & set(INFRA_SOURCES)
+
+
+@pytest.mark.parametrize('incremental', [False, True])
+@pytest.mark.parametrize('mixed', [False, True])
+@pytest.mark.parametrize('budget,model_budget,early_stop,expected', [
+    (3, 3, 15, 3), (6, 6, 15, 6), (3, 1, 15, 3), (6, 6, 1, 1),
+])
+def test_indeed_round_robin_detail_budget(tmp_path, incremental, mixed, budget, model_budget, early_stop, expected):
+    a = IndeedSearchAdapter()
+    development = SOURCE_PRESETS['development']
+    selected = SOURCES if mixed else development  # mixed deliberately Infra first
+    owners = {}
+    def cards(source, page):
+        assert page == 1
+        jobs = [job_from_url(f'https://jp.indeed.com/viewjob?jk=fictional_{SOURCES.index(source)}_{i}', {}) for i in range(8)]
+        owners.update({j.job_id: source for j in jobs})
+        return jobs
+    a.search_cards = Mock(side_effect=cards)
+    a.job_detail = Mock(return_value={'title': '架空開発', 'responsibilities': '自社 AWS Lambda API の設計と開発。', 'salary': '600万円'})
+    model = Mock(model_name='fictional')
+    model.classify_jobs.side_effect = lambda jobs: {j.job_id: SearchEvaluation(verdict='POSSIBLE', summary='虚构') for j in jobs}
+    with Database(tmp_path / 'fictional.db') as db:
+        _, stats = run_search(a, SearchStore(db), model, keywords=selected,
+            max_jobs=budget, max_model_jobs=model_budget, early_stop=early_stop,
+            batch_size=1, pages_per_keyword=None if incremental else 2)
+    # Incremental mode intentionally does not use fixed-page early_stop.
+    count = budget if incremental else expected
+    assert [owners[c.args[0].job_id] for c in a.job_detail.call_args_list] == list(development[:count])
+    assert stats['details'] == count
+    assert stats['model_jobs'] == min(count, model_budget)
+    assert all(c.args[1] == 1 for c in a.search_cards.call_args_list)
+    assert all(pages == [1] for pages in stats['source_pages'].values())
+
+
+@pytest.mark.parametrize('safety_stop', [False, True])
+def test_indeed_round_robin_cached_duplicate_empty_and_safety(tmp_path, safety_stop):
+    from scout_agent.green_discovery import GreenSearchDOMPending, Stage
+    a = IndeedSearchAdapter()
+    sources = SOURCE_PRESETS['development']
+    cached_url = 'https://jp.indeed.com/viewjob?jk=fictional_cached'
+    def cards(source, page):
+        index = sources.index(source)
+        if index == 2 and safety_stop:
+            raise GreenSearchDOMPending(Stage.SOURCE_URL, 'CHALLENGE')
+        if index == 3:
+            return []
+        return [job_from_url(cached_url, {}), *[
+            job_from_url(f'https://jp.indeed.com/viewjob?jk=fictional_{index}_{i}', {}) for i in range(5)]]
+    a.search_cards = Mock(side_effect=cards)
+    fields = {'title': '架空開発', 'responsibilities': '自社 AWS Lambda API を開発。', 'salary': '600万円'}
+    a.job_detail = Mock(return_value=fields)
+    model = Mock(model_name='fictional')
+    model.classify_jobs.side_effect = lambda jobs: {j.job_id: SearchEvaluation(verdict='POSSIBLE', summary='虚构') for j in jobs}
+    with Database(tmp_path / 'fictional.db') as db:
+        store = SearchStore(db)
+        cached = job_from_url(cached_url, fields)
+        store.save_job(cached)
+        store.save_result(cached, POLICY_VERSION, SearchEvaluation(verdict='TARGET', summary='保留缓存'), 'codex', 'fictional')
+        store.set_user_state(cached.job_id, 'EXCLUDED')
+        kwargs = dict(keywords=sources, max_jobs=6, max_model_jobs=3, batch_size=1, pages_per_keyword=None)
+        if safety_stop:
+            with pytest.raises(GreenSearchDOMPending) as exc:
+                run_search(a, store, model, **kwargs)
+            assert exc.value.reason == 'CHALLENGE'
+            assert [c.args[0] for c in a.search_cards.call_args_list] == list(sources[:3])
+            assert a.job_detail.call_count == 2
+        else:
+            _, stats = run_search(a, store, model, **kwargs)
+            ids = [c.args[0].external_job_id for c in a.job_detail.call_args_list]
+            assert ids[:5] == [f'fictional_{i}_0' for i in (0, 1, 2, 4, 5)]
+            assert len(set(ids)) == stats['details'] == 6
+            assert stats['cache_hits'] == 1 and stats['model_jobs'] == 3
+        assert store.user_states()[cached.job_id] == 'EXCLUDED'
+        assert store.cached(cached, POLICY_VERSION).summary == '保留缓存'
+
+
+def test_documented_indeed_live_discovery_command_and_checks(capsys):
+    from scout_agent.platform_discovery import main, evidence
+    from test_indeed_discovery import snapshot
+    readme = Path('README.md').read_text()
+    command = 'python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform indeed'
+    assert command in readme
+    assert '`search indeed --probe` **不支持**' in readme
+    # argparse validates platform/endpoint and exits before importing Playwright.
+    with pytest.raises(SystemExit) as exc:
+        main(command.split()[3:] + ['--help'])
+    assert exc.value.code == 0
+    assert '--cdp-endpoint' in capsys.readouterr().out
+    a = IndeedSearchAdapter()
+    for source in GENERAL_DEV_SOURCES:
+        result = evidence('indeed', a.source_url(source), snapshot(links=[JD]))
+        assert result['source_route'] == 'jobs-query'
+        assert result['query_keys_present']['q'] and result['jk_link_count'] == 1
+        assert source in readme
+    good = evidence('indeed', JD, snapshot(canonical=JD))
+    assert good['stable_identity_candidate'] == 'jk'
+    assert good['canonical_pattern'] == '/viewjob?jk=:id'
+    bad = evidence('indeed', JD, snapshot(canonical='https://jp.indeed.com/viewjob?jk=fictional_wrong'))
+    assert bad['stable_identity_candidate'] is None and bad['canonical_pattern'] is None
+    for key in ('source_route', 'jk_link_count', 'stable_identity_candidate', 'canonical_pattern'):
+        assert key in readme

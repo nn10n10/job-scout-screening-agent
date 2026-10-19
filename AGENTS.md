@@ -22,7 +22,10 @@ Platform order: type (implemented), then doda, マイナビ転職, Forkwell, LAP
 
 TASK-016 source discovery: Indeed's source/preset truth lives in `indeed_search.py`.
 Mixed Indeed selections prioritize generic development, then cloud development,
-then Infra; budgets remain shared and tiny budgets do not guarantee every source.
+then Infra, interleaving at most one detail per source per round (Indeed only).
+Incremental cache hits/duplicates/list drops do not consume detail turns; safety stops
+terminate immediately. Shared detail/model budgets and fixed-page early_stop
+still apply; tiny budgets do not guarantee every source.
 New generic q labels are offline-checked only, pending independent authorized live
 probes. Green/Type/doda/Mynavi development routes remain
 `PENDING_LIVE_SOURCE_EVIDENCE`; never infer category URLs or selectors.
