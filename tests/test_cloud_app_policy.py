@@ -16,8 +16,8 @@ from scout_agent.target_domain import assess_target_domain
 
 
 @pytest.mark.parametrize('title,duties,status,verdict', [
-    ('Backend Engineer', '自社製品の AWS Lambda/API Gateway/DynamoDB サービスを開発。', 'TARGET_CONFIRMED', 'KEEP'),
-    ('Full-stack Engineer', '自社サービスを ECS / AWS 托管サービスで実装・デプロイ。', 'TARGET_CONFIRMED', 'KEEP'),
+    ('Backend Engineer', '自社製品の AWS Lambda/API Gateway/DynamoDB サービスを開発。', 'TARGET_UNCERTAIN', 'MAYBE'),
+    ('Full-stack Engineer', '自社サービスを ECS / AWS 托管サービスで実装・デプロイ。自社オフィス勤務。', 'TARGET_CONFIRMED', 'KEEP'),
     ('Server-side Engineer', '自社オフィスで AWS 上の API を開発。', 'TARGET_CONFIRMED', 'KEEP'),
     ('SRE', 'AWS 基盤の設計・構築を主担当。', 'TARGET_CONFIRMED', 'KEEP'),
     ('Backend Engineer', 'API 開発。\n技術スタック\nAWS Python', 'TARGET_UNCERTAIN', 'MAYBE'),
@@ -29,6 +29,12 @@ from scout_agent.target_domain import assess_target_domain
     ('Backend Engineer', '非派遣の受託開発。自社オフィスで AWS Lambda サービスを開発。', 'TARGET_CONFIRMED', 'KEEP'),
     ('Backend Engineer', 'AWS Lambda サービスを開発。勤務地・配属は未定。', 'TARGET_UNCERTAIN', 'MAYBE'),
     ('Backend Engineer', '自社製品の AWS Lambda を開発。勤務地・配属は未定。', 'TARGET_UNCERTAIN', 'MAYBE'),
+    ('Backend Engineer', '自社製品の AWS Lambda/API Gateway を開発。自社オフィス勤務。', 'TARGET_CONFIRMED', 'KEEP'),
+    ('Backend Engineer', '会社は自社サービスを提供。本募集の勤務地は入社後決定。AWS Lambda を開発。', 'TARGET_UNCERTAIN', 'MAYBE'),
+    ('Backend Engineer', '自社オフィス勤務。必須スキル AWS、通常のアプリ開発を担当。', 'TARGET_UNCERTAIN', 'MAYBE'),
+    ('Backend Engineer', '自社オフィス勤務。必須スキル AWS。通常のアプリ開発を担当。', 'TARGET_UNCERTAIN', 'MAYBE'),
+    ('Backend Engineer', '当社では客先常駐を含むSES事業も運営。本募集は自社サービスのAWS Lambda開発で自社オフィス勤務。', 'TARGET_CONFIRMED', 'KEEP'),
+    ('Backend Engineer', '客先常駐のない自社製品開発です。AWS Lambda を実装。', 'TARGET_CONFIRMED', 'KEEP'),
     ('Backend Engineer', '', 'TARGET_UNCERTAIN', 'MAYBE'),
 ])
 def test_scout_policy(title, duties, status, verdict):
@@ -57,12 +63,15 @@ def test_local_reprocess_retains_cloud_development(platform, duties):
 
 
 @pytest.mark.parametrize('text,conflict', [
+    ('当社では客先常駐を含むSES事業も運営。本募集は自社サービスのAWS Lambda開発で自社オフィス勤務。', False),
+    ('客先常駐のない自社製品開発です。', False),
     ('客先常駐なし。SESなし。', False),
     ('客先常駐はありません。', False),
     ('会社はSES事業。本職は自社製品を自社内で開発。', False),
     ('自社オフィスで受託開発。派遣ではありません。', False),
     ('客先常駐なしの案件もある。本職は客先常駐で勤務。', True),
     ('SESなし。本職は派遣先勤務。', True),
+    ('仕事内容：客先常駐で AWS 開発（SES事業）。', True),
     ('SES案件に配属。AWS 開発。', True),
     ('案件に応じて客先で勤務。', True),
 ])
@@ -134,9 +143,13 @@ def test_search_new_policy_preserves_history_and_manual_state(tmp_path, state):
 
 
 @pytest.mark.parametrize('platform', ['type', 'doda', 'mynavi'])
-def test_local_client_assignment_overrides_cloud_app(platform):
+@pytest.mark.parametrize('assignment', [
+    '客先常駐なしの案件もあるが、本募集は客先常駐で勤務。',
+    'SESなし。本職は派遣先勤務。', 'SES案件に配属。', '案件に応じて客先勤務。',
+])
+def test_local_client_assignment_overrides_cloud_app(platform, assignment):
     scout = Scout(platform=platform, job_title='AWS Backend Engineer',
-                  jd_text='自社製品の AWS Lambda を開発。SESなし。本職は派遣先勤務。')
+                  jd_text='自社製品の AWS Lambda を開発。' + assignment)
     result = reprocess_stored_scout(scout)
     assert result.decision == 'local_skip' and result.evaluation.verdict == 'SKIP'
 
@@ -152,3 +165,41 @@ def test_indeed_cli_accepts_precise_source_without_browser(monkeypatch):
     monkeypatch.setattr('scout_agent.search.search_command', fake_command)
     assert cli.main(['search', 'indeed', '--keyword', 'AWS バックエンドエンジニア']) == 0
     assert seen == ['AWS バックエンドエンジニア']
+
+
+@pytest.mark.parametrize('platform', ['type', 'doda', 'mynavi'])
+@pytest.mark.parametrize('context', [
+    '当社では客先常駐を含むSES事業も運営。',
+    '客先常駐のない自社製品開発です。',
+    '当社にはSES事業もある。受託開発を担当。派遣ではありません。',
+    '会社紹介：SES事業では案件選択制、単価連動、還元率80。',
+])
+@pytest.mark.parametrize('structured', [False, True])
+def test_inhouse_assignment_survives_platform_hard_gates(platform, context, structured):
+    duties = context + '本募集は自社オフィス勤務で AWS Lambda API を開発。'
+    scout = Scout(platform=platform, job_title='Backend Engineer',
+                  jd_text=('jobContentOutline: ' if structured else '') + duties)
+    assert not detail_drop({'responsibilities': duties})
+    assert MockClassifier().classify(scout).verdict == 'KEEP'
+    assert reprocess_stored_scout(scout).decision == 'classifier_candidate'
+
+
+def test_web_indeed_sources_use_adapter_source_of_truth(tmp_path):
+    from fastapi.testclient import TestClient
+    from scout_agent.web.app import create_app
+    with TestClient(create_app(tmp_path / 'fictional.db')) as client:
+        response = client.get('/search')
+    assert response.status_code == 200
+    labels = response.context['source_labels']['indeed']
+    assert tuple(labels) == SOURCES
+    assert 'Object.keys(labels)' in response.text
+    assert 'renderSources, platformSources' in response.text
+
+
+@pytest.mark.parametrize('location', ['自社オフィス勤務。勤務地は入社後決定。', '勤務地・配属は未定。'])
+def test_location_field_uncertainty_overrides_product_and_office(location):
+    scout = Scout(platform='fictional', job_title='Backend Engineer',
+                  jd_text='自社製品の AWS Lambda を開発。自社オフィス勤務。',
+                  location_text=location)
+    assert assess_target_domain(scout).status == 'TARGET_UNCERTAIN'
+    assert MockClassifier().classify(scout).verdict == 'MAYBE'

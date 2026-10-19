@@ -10,11 +10,32 @@ CLOUD_APP_DUTY = re.compile(
 INHOUSE = re.compile(r'自社(?:サービス|製品|プロダクト|開発|内|オフィス)|内製|受託.*(?:自社|社内)|in.house', re.I)
 
 
+# Product ownership is separate from this hire's workplace/assignment.
+INHOUSE_WORKPLACE = re.compile(
+    r'自社(?:内|オフィス|事務所|拠点)(?:で|に|勤務|作業)|自社勤務|社内勤務|'
+    r'非派遣|派遣では(?:ない|ありません)|'
+    r'(?:客先|顧客先|クライアント先)常駐(?:は|が)?(?:一切)?(?:なし|無し|ありません|しない|ではない|ゼロ|のない)', re.I)
+
+
+def confirmed_inhouse_workplace(text: str) -> bool:
+    return bool(INHOUSE_WORKPLACE.search(text)) and not re.search(
+        r"(?:配属|勤務地|担当業務).{0,20}(?:未定|入社後|決定|不明)|"
+        r"(?:希望|適性|スキル|経験).{0,30}(?:配属|案件)|いずれかに配属|案件もある", text,
+    )
+
+
 def client_site_conflict(text: str) -> bool:
-    # Remove individual negative statements, never suppress a separate conflict.
-    text = re.sub(r'(?:客先|顧客先|クライアント先)常駐(?:は|が)?(?:一切)?(?:なし|無し|ありません|しない|ではない|ゼロ)|SES\s*(?:なし|ではない|ではありません)', '', text, flags=re.I)
-    # A company's SES business alone says nothing about this assignment.
-    return bool(re.search(r'(?:客先|顧客先|クライアント先)常駐|派遣先(?:勤務|で勤務|に勤務)|SES\s*案件(?:に|へ)?配属|(?:案件|プロジェクト).{0,15}客先.{0,12}(?:勤務|常駐)|SES事業で顧客プロジェクトに配属|案件選択制で客先|案件配属制で顧客|客户项目配属为主', text, re.I))
+    # Sentence/clause scope prevents a company history or a negation from
+    # either creating a conflict or hiding a later explicit role assignment.
+    for clause in re.split(r'[。\n；;]|[、,](?=本募集|本職|本ポジション|当ポジション)|(?=本募集|本職|本ポジション|当ポジション)', text):
+        clause = re.sub(r'(?:客先|顧客先|クライアント先)常駐(?:は|が)?(?:一切)?(?:なし|無し|ありません|しない|ではない|ゼロ|のない)|SES\s*(?:なし|ではない|ではありません)', '', clause, flags=re.I)
+        # Only business descriptions, not a concrete hire/assignment, are exempt.
+        if (re.search(r'(?:当社|弊社|会社|企業|会社紹介|沿革).*(?:SES|常駐).*(?:事業|運営|展開)|(?:SES|常駐).*事業も|(?:過去|以前).*(?:SES|常駐)', clause, re.I)
+                and not re.search(r'本募集|本職|本ポジション|当ポジション|配属|勤務|担当', clause)):
+            continue
+        if re.search(r'(?:客先|顧客先|クライアント先)常駐|派遣先(?:勤務|で勤務|に勤務)|SES\s*案件(?:に|へ)?配属|(?:案件|プロジェクト).{0,15}客先.{0,12}(?:勤務|常駐)|SES事業で顧客プロジェクトに配属|案件選択制で客先|案件配属制で顧客|客户项目配属为主', clause, re.I):
+            return True
+    return False
 
 
 def development_candidate(title: str, duties: str) -> bool:

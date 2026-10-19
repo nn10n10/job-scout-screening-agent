@@ -184,7 +184,7 @@ def test_namespace_cache_user_state_and_validated_cards(tmp_path):
         assert stats['source_pages'] == {s:[1] for s in SOURCES}
         assert store.source_cursor('indeed:SRE', 15) == 2
         assert store.source_cursor('green:fictional', 15) == 7
-    assert POLICY_VERSION == 'cloud-app-search-0.2.0'
+    assert POLICY_VERSION == 'cloud-app-search-0.2.1'
     job, result = results[0]
     cards = search_cards([(job,result)], {})
     assert cards[0]['platform_label'] == 'Indeed'

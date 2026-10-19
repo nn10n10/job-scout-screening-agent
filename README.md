@@ -133,7 +133,7 @@ python -m scout_agent evaluate --platform green --replace-provider mock
 
 没有显式选择 Gemini 时，不会因为 `GEMINI_API_KEY` 存在而切换 provider。Gemini 使用官方 `google-genai` SDK，以 Pydantic `Evaluation` 作为 structured output。数据库为每次评价记录 provider、model name、evaluated_at；HTML/JSON 报告也显示模型。筛选规则位于 `scout_agent/prompts/screening_rules.txt`；结果仍需人工复核。
 
-Cloud/Infrastructure/Platform/DevOps/SRE 主责仍优先。Backend/Server-side/Full-stack 或云上应用开发也可 KEEP/TARGET：须引用 JD 实际职责中云服务开发、实现或部署的证据（AWS 托管后端、Lambda/API Gateway/DynamoDB、ECS/EKS、云原生服务等），不要求亲自管理基础设施。仅技术标签、职责不清或自社勤務/客先配属未知则 MAYBE/POSSIBLE；明确纯非云开发不提升。岗位明确客先常駐、派遣先勤務或 SES 案件配属必须 SKIP/DROP，优先于技术匹配；客先常駐なし / SESなし不可误伤，公司有 SES 业务不代表本岗位驻场，在自社办公室受托开发也不等同驻场。保留日语主、450万底线/500万期望、Remote/Hybrid、无强制 Casual、K8s 非必要的既有偏好。
+Cloud/Infrastructure/Platform/DevOps/SRE 主责仍优先。Backend/Server-side/Full-stack 或云上应用开发也可 KEEP/TARGET：须引用 JD 实际职责中云服务开发、实现或部署的证据（AWS 托管后端、Lambda/API Gateway/DynamoDB、ECS/EKS、云原生服务等），不要求亲自管理基础设施。仅技术标签、职责不清或自社勤務/客先配属未知则 MAYBE/POSSIBLE；自社产品/内製只说明产品或组织性质，不证明本岗位自社办公或非派遣。明确纯非云开发不提升。岗位明确客先常駐、派遣先勤務或 SES 案件配属必须 SKIP/DROP，优先于技术匹配；客先常駐なし / SESなし不可误伤，公司有 SES 业务不代表本岗位驻场，在自社办公室受托开发也不等同驻场。保留日语主、450万底线/500万期望、Remote/Hybrid、无强制 Casual、K8s 非必要的既有偏好。
 
 新评价的 `summary`、`reasons`、`concerns` 说明文字须为简体中文；公司名、职位名、技术术语保留原文。明显没有中文说明的模型输出会报错，不会写入数据库。旧评价不会自动改写；请用 `--replace-provider` 定向更新。
 

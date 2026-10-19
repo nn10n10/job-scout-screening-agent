@@ -373,7 +373,7 @@ def test_web_platform_source_and_live_controls(tmp_path):
     with TestClient(app) as client:
         html = client.get('/search').text
         assert '<option value="findy">Findy</option>' in html
-        assert "findy: ['おすすめ求人']" in html
+        assert list(client.get('/search').context['source_labels']['findy']) == ['おすすめ求人']
         assert "const singlePage = form.elements.platform.value === 'lapras'" in html
         assert not (tmp_path / 'fictional.db').exists()
     config = validate_config({'platform': 'findy', 'coverage_pages': 4, 'max_depth': 20})

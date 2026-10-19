@@ -85,7 +85,7 @@ const csrf = {{ csrf_token|tojson }};
 const form = document.getElementById('search-form'), button = document.getElementById('start');
 const configLimits = {{ limits|tojson }};
 const sourceLabels = {{ source_labels|default({})|tojson }};
-const platformSources = {indeed: ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps', 'AWS バックエンドエンジニア', 'クラウドネイティブ 開発', 'AWS フルスタックエンジニア'], mynavi: ['インフラエンジニア'], doda: ['インフラエンジニア'], green: {{ sources|tojson }}, forkwell: ['求人一覧'], lapras: ['求人検索'], findy: ['おすすめ求人'], type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']};
+const platformSources = Object.fromEntries(Object.entries(sourceLabels).map(([platform, labels]) => [platform, Object.keys(labels)]));
 function renderSources() {
   const container = form.querySelector('.search-source-options');
   const singlePage = form.elements.platform.value === 'lapras' || form.elements.platform.value === 'type' || form.elements.platform.value === 'indeed';
@@ -106,7 +106,7 @@ function renderSources() {
   }
 }
 form.elements.platform.addEventListener('change', renderSources);
-SearchConfig.restore(form, configLimits, renderSources);
+SearchConfig.restore(form, configLimits, renderSources, platformSources);
 const advancedToggle = form.querySelector('.search-advanced-toggle');
 advancedToggle.addEventListener('click', () => {
   const panel = document.getElementById(advancedToggle.getAttribute('aria-controls'));

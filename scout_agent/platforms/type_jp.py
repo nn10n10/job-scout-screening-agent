@@ -13,7 +13,7 @@ from playwright.sync_api import Error as PlaywrightError, Page
 
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
-from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict
+from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict, confirmed_inhouse_workplace
 from .base import PlatformAdapter
 
 
@@ -258,6 +258,8 @@ def type_ses_hard_rule(scout: Scout) -> Evaluation | None:
         return None
     primary = _type_primary_jd(jd)
     location = scout.location_text or ""
+    if confirmed_inhouse_workplace(primary + "\n" + location):
+        return None
     combined = " ".join((scout.job_title or "", jd, scout.salary_text or "", location))
     site = TYPE_CLIENT_ASSIGNMENT.search(location) or TYPE_CLIENT_ASSIGNMENT.search(primary)
     signals = [name for pattern, name in TYPE_STRONG_SES if pattern.search(combined)]

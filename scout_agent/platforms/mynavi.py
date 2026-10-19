@@ -13,7 +13,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
-from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict
+from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict, confirmed_inhouse_workplace
 from .type_jp import TYPE_CLIENT_ASSIGNMENT, TYPE_INHOUSE_NO_CLIENT
 from .doda import _job_outline, doda_detail_prefilter
 from .base import PlatformAdapter
@@ -267,6 +267,8 @@ def mynavi_ses_hard_rule(scout: Scout) -> Evaluation | None:
         return None
     outline = _job_outline(jd)
     location = scout.location_text or ""
+    if confirmed_inhouse_workplace((outline or jd) + "\n" + location):
+        return None
     if TYPE_INHOUSE_NO_CLIENT.search(" ".join((scout.job_title or "", outline, location))):
         return None
     site = TYPE_CLIENT_ASSIGNMENT.search(" ".join((location, outline)))

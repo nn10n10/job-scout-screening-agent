@@ -125,7 +125,7 @@ def test_cli_web_and_telemetry(monkeypatch, capsys, tmp_path):
     with TestClient(create_app(tmp_path/'fictional.db', search_runner=lambda *args: 0)) as client:
         html = client.get('/search').text
         assert '<option value="mynavi">マイナビ転職</option>' in html
-        assert "mynavi: ['インフラエンジニア']" in html
+        assert list(client.get('/search').context['source_labels']['mynavi']) == ['インフラエンジニア']
 
 
 def test_cache_cursor_namespace(tmp_path):
@@ -145,7 +145,7 @@ def test_cache_cursor_namespace(tmp_path):
         assert stats['cache_hits'] == 1 and model.classify_jobs.call_count == 1
         assert store.source_cursor('mynavi:'+SOURCES[0], 15) != 2
         for source in history: assert store.source_cursor(source, 15) == 7
-    assert POLICY_VERSION == 'cloud-app-search-0.2.0'
+    assert POLICY_VERSION == 'cloud-app-search-0.2.1'
 
 
 def test_badge_link_and_identity():

@@ -11,7 +11,7 @@ import re
 from typing import Literal
 
 from scout_agent.models.scout import Scout
-from scout_agent.cloud_app_policy import CLOUD_APP_DUTY, INHOUSE, NONCLOUD, client_site_conflict, development_candidate
+from scout_agent.cloud_app_policy import CLOUD_APP_DUTY, confirmed_inhouse_workplace, NONCLOUD, client_site_conflict, development_candidate
 
 
 TargetStatus = Literal["TARGET_CONFIRMED", "TARGET_UNCERTAIN", "TARGET_REJECTED"]
@@ -179,13 +179,18 @@ def assess_target_domain(scout: Scout) -> TargetAssessment:
         primary = section[:1050]
         role = title if len(sections) == 1 else section.splitlines()[0][:180]
         explicitly_noncloud = bool(NONCLOUD.search(primary))
-        app = None if explicitly_noncloud else CLOUD_APP_DUTY.search(primary)
+        app = None
+        if not explicitly_noncloud:
+            for match in CLOUD_APP_DUTY.finditer(primary):
+                sentence_start = max(primary.rfind("。", 0, match.start()), primary.rfind("\n", 0, match.start())) + 1
+                if not re.search(r"必須|歓迎|スキル|経験|要件|技術スタック|使用技術", primary[sentence_start:match.end()]):
+                    app = match
+                    break
         if development_candidate(role, primary):
             if app:
                 return TargetAssessment(
-                    "TARGET_CONFIRMED" if (
-                        INHOUSE.search(primary + (scout.location_text or ""))
-                        and not re.search(r"(?:配属|勤務地|担当業務).{0,20}(?:未定|入社後|決定|不明)", primary)
+                    "TARGET_CONFIRMED" if confirmed_inhouse_workplace(
+                        primary + "\n" + (scout.location_text or "")
                     ) else "TARGET_UNCERTAIN",
                     "CLOUD_APP_DEV", _brief_evidence(primary, app),
                     "职责包含云服务开发；仅在自社勤務或非派遣工作方式明确时确认目标。",

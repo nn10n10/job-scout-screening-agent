@@ -319,7 +319,7 @@ def test_web_page_and_safe_lapras_telemetry(tmp_path):
     with TestClient(app) as client:
         html = client.get('/search').text
         assert '<option value="lapras">LAPRAS</option>' in html
-        assert "lapras: ['求人検索']" in html
+        assert list(client.get('/search').context['source_labels']['lapras']) == ['求人検索']
         assert '分页尚未验证' in html
         assert not (tmp_path / 'fictional.db').exists()  # GET never migrates.
     manager = SearchRunManager(runner=lambda argv, env, emit:

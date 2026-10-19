@@ -10,8 +10,16 @@ from js_test_utils import require_node
 from fastapi.testclient import TestClient
 
 from scout_agent.green_discovery import KEYWORDS
+from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
 from scout_agent.web.app import create_app
 from scout_agent.web.search_runs import LIMITS
+
+
+PLATFORM_SOURCES_JS = 'const platformSources = ' + json.dumps({
+    'forkwell': ['求人一覧'], 'lapras': ['求人検索'], 'findy': ['おすすめ求人'],
+    'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
+    'doda': ['インフラエンジニア'], 'mynavi': ['インフラエンジニア'],
+}) + ';\n'
 
 
 def test_search_config_reload_and_validation(tmp_path):
@@ -19,6 +27,7 @@ def test_search_config_reload_and_validation(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
     script += 'const labels = ' + json.dumps(list(KEYWORDS)) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored = null;
@@ -82,7 +91,7 @@ def test_search_page_wires_persistence_before_submit(tmp_path):
     with TestClient(app) as client:
         html = client.get('/search').text
         assert '/static/search_config.js' in html
-        assert 'SearchConfig.restore(form, configLimits, renderSources)' in html
+        assert 'SearchConfig.restore(form, configLimits, renderSources, platformSources)' in html
         assert '<option value="forkwell">Forkwell</option>' in html
         assert 'platform: form.elements.platform.value' in html
         assert html.index('SearchConfig.save(form, configLimits)') < html.index("fetch('/search/run',")
@@ -181,6 +190,7 @@ def test_search_controls_labels_structure_and_styles(tmp_path):
 def test_forkwell_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -201,13 +211,13 @@ function form() {
 const first = form(); first.elements.platform.value = 'forkwell'; first.render();
 assert.equal(SearchConfig.save(first, limits), true);
 assert.equal(JSON.parse(stored).platform, 'forkwell');
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'forkwell');
 assert.deepEqual(second.inputs.map(i => i.value), ['求人一覧']);
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['求人一覧'], limits), null);
 console.log('Forkwell platform and source survive reload; cross-platform sources rejected');
@@ -220,6 +230,7 @@ console.log('Forkwell platform and source survive reload; cross-platform sources
 def test_lapras_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -251,7 +262,7 @@ for (const platform of ['green', 'forkwell']) {
 }
 stored = JSON.stringify({...normalized, coverage_pages:'invalid', max_depth:1});
 
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'lapras');
 assert.deepEqual(second.inputs.map(i => i.value), ['求人検索']);
 for (const name of ['coverage_pages', 'max_depth']) {
@@ -261,7 +272,7 @@ for (const name of ['coverage_pages', 'max_depth']) {
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['求人検索'], limits), null);
 console.log('Forkwell platform and source survive reload; cross-platform sources rejected');
@@ -328,6 +339,7 @@ console.log('LAPRAS paging fields hidden; Green/Forkwell restored');
 def test_findy_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -348,13 +360,13 @@ function form() {
 const first = form(); first.elements.platform.value = 'findy'; first.render();
 assert.equal(SearchConfig.save(first, limits), true);
 assert.equal(JSON.parse(stored).platform, 'findy');
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'findy');
 assert.deepEqual(second.inputs.map(i => i.value), ['おすすめ求人']);
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['おすすめ求人'], limits), null);
 console.log('Findy platform and source survive reload; cross-platform sources rejected');
@@ -367,6 +379,7 @@ console.log('Findy platform and source survive reload; cross-platform sources re
 def test_type_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -398,7 +411,7 @@ for (const platform of ['green', 'forkwell']) {
 }
 stored = JSON.stringify({...normalized, coverage_pages:'invalid', max_depth:1});
 
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'type');
 assert.deepEqual(second.inputs.map(i => i.value), ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']);
 for (const name of ['coverage_pages', 'max_depth']) {
@@ -408,7 +421,7 @@ for (const name of ['coverage_pages', 'max_depth']) {
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'], limits), null);
 console.log('Type platform and source survive reload; cross-platform sources rejected');
@@ -421,6 +434,7 @@ console.log('Type platform and source survive reload; cross-platform sources rej
 def test_doda_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -441,13 +455,13 @@ function form() {
 const first = form(); first.elements.platform.value = 'doda'; first.render();
 assert.equal(SearchConfig.save(first, limits), true);
 assert.equal(JSON.parse(stored).platform, 'doda');
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'doda');
 assert.deepEqual(second.inputs.map(i => i.value), ['インフラエンジニア']);
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['インフラエンジニア'], limits), null);
 console.log('doda platform and source survive reload; cross-platform sources rejected');
@@ -460,6 +474,7 @@ console.log('doda platform and source survive reload; cross-platform sources rej
 def test_mynavi_config_survives_reload(tmp_path):
     script = Path('scout_agent/web/static/search_config.js').read_text()
     script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += PLATFORM_SOURCES_JS
     script += r'''
 const assert = require('node:assert/strict');
 let stored;
@@ -480,13 +495,13 @@ function form() {
 const first = form(); first.elements.platform.value = 'mynavi'; first.render();
 assert.equal(SearchConfig.save(first, limits), true);
 assert.equal(JSON.parse(stored).platform, 'mynavi');
-const second = form(); SearchConfig.restore(second, limits, second.render);
+const second = form(); SearchConfig.restore(second, limits, second.render, platformSources);
 assert.equal(second.elements.platform.value, 'mynavi');
 assert.deepEqual(second.inputs.map(i => i.value), ['インフラエンジニア']);
 assert.equal(SearchConfig.save(second, limits), true);
 const good = stored;
 stored = JSON.stringify({...JSON.parse(good), sources:['AWS']});
-const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render);
+const fallback = form(); SearchConfig.restore(fallback, limits, fallback.render, platformSources);
 assert.equal(fallback.elements.platform.value, 'green');
 assert.equal(SearchConfig.validate({...JSON.parse(good),platform:'all'}, ['インフラエンジニア'], limits), null);
 console.log('mynavi platform and source survive reload; cross-platform sources rejected');
@@ -494,3 +509,32 @@ console.log('mynavi platform and source survive reload; cross-platform sources r
     result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'cross-platform sources rejected' in result.stdout
+
+
+@pytest.mark.parametrize('source', INDEED_SOURCES)
+def test_indeed_config_restores_server_sources(source):
+    from scout_agent.indeed_search import SOURCES
+    script = Path('scout_agent/web/static/search_config.js').read_text()
+    script += '\nconst limits = ' + json.dumps(LIMITS) + ';\n'
+    script += 'const platformSources = ' + json.dumps({'green': list(KEYWORDS), 'indeed': SOURCES}) + ';\n'
+    script += 'const selected = ' + json.dumps(source) + ';\n'
+    script += r'''
+const assert = require('node:assert/strict');
+const saved = {platform:'indeed', sources:[selected], ...Object.fromEntries(Object.entries(limits).map(([k,[v]]) => [k,v]))};
+global.sessionStorage = {getItem: () => JSON.stringify(saved)};
+const form = {elements:{platform:{value:'green'}}, inputs:[],
+  querySelectorAll(selector) {
+    if (selector === '[name=sources]') return this.inputs;
+    if (selector === '[type=number]') return [];
+    throw Error(selector);
+  }};
+function render() { form.inputs = platformSources[form.elements.platform.value].map(value => ({value,checked:true})); }
+render();
+SearchConfig.restore(form, limits, render, platformSources);
+assert.equal(form.elements.platform.value, 'indeed');
+assert.deepEqual(form.inputs.filter(i => i.checked).map(i => i.value), [selected]);
+console.log('Indeed source survives validated sessionStorage restore');
+'''
+    result = subprocess.run([require_node(), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'Indeed source survives' in result.stdout

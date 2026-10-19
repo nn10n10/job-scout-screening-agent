@@ -94,6 +94,7 @@ def search_pool(
     from .search_pool import PAGE_SIZES, STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
     from .viewmodels import search_cards
     from .search_runs import KEYWORDS, LIMITS
+    from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
     def selection(name, values, allowed, default):
         if values is None:
             if name + '_present' in request.query_params:
@@ -122,7 +123,7 @@ def search_pool(
         "all_platforms": PLATFORMS, "source_label": source_label,
         "source_labels": {p: {s: source_label(p, s) for s in values} for p, values in {
             'green': KEYWORDS, 'forkwell': ['求人一覧'], 'lapras': ['求人検索'],
-            'indeed': ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps'], 'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
+            'indeed': INDEED_SOURCES, 'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
             'doda': ['インフラエンジニア'], 'mynavi': ['インフラエンジニア'],
         }.items()},
         "cards": search_cards(pool['results'], pool['states']), "sources": KEYWORDS, "limits": LIMITS,
