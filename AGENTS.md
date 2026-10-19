@@ -19,3 +19,12 @@
 - A verification subagent must return evidence, not merely "passed": (1) the exact command run; (2) exit code; (3) the pytest summary line, including passed/failed/skipped/xfailed/warnings when present; (4) test files or test names directly related to the change; (5) key output for any warning, skip, or failure; (6) whether it accessed a real browser, real database, real recruitment site, or paid model; and (7) key stdout from any CLI smoke test. Explicitly say "none" or "not run" for inapplicable items. The main Agent must retain these facts in its concise final summary rather than reducing them to "tests passed".
 
 Platform order: type (implemented), then doda, マイナビ転職, Forkwell, LAPRAS. Do not infer selectors for remaining platforms; inspect their authenticated DOM before implementation.
+
+TASK-016 source discovery: Indeed's source/preset truth lives in `indeed_search.py`.
+Mixed Indeed selections prioritize generic development, then cloud development,
+then Infra; budgets remain shared and tiny budgets do not guarantee every source.
+New generic q labels are offline-checked only, pending independent authorized live
+probes. Green/Type/doda/Mynavi development routes remain
+`PENDING_LIVE_SOURCE_EVIDENCE`; never infer category URLs or selectors.
+Forkwell/LAPRAS/Findy lists do not imply keyword-search support. Source-only
+changes do not require a POLICY_VERSION bump or historical reevaluation.

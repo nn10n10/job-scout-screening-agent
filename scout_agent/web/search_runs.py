@@ -41,7 +41,7 @@ def validate_config(data):
     if not isinstance(sources, list) or not sources or any(
         not isinstance(s, str) or s not in SEARCH_SOURCES[platform] for s in sources
     ) or len(sources) != len(set(sources)):
-        raise ValueError('请选择已验证的 source')
+        raise ValueError('请选择当前平台白名单内的 source')
     config = {'sources': sources[:]}
     if 'platform' in data:
         config['platform'] = platform

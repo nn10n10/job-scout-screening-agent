@@ -288,6 +288,9 @@ def run_search(adapter, store, classifier, *, keywords=KEYWORDS, max_jobs=30,
             accept(job, output[job.job_id], 'codex')
         pending.clear()
 
+    if getattr(adapter, 'platform_key', 'green') == 'indeed':
+        from scout_agent.indeed_search import prioritize_sources
+        keywords = prioritize_sources(keywords)
     stop = False
     for keyword in keywords:
         source_key = source_identity(getattr(adapter, "platform_key", "green"), keyword)

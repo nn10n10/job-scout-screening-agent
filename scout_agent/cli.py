@@ -119,10 +119,11 @@ def main(
     search.add_argument("--max-model-jobs", type=_positive_int, default=20, help="Codex 职位预算（默认 20）")
     search.add_argument("--pages-per-keyword", type=_positive_int, default=None, help="兼容模式：每 source 固定前 N 页；未指定时增量轮转（probe 固定第一页）")
     from scout_agent.green_discovery import KEYWORDS
-    from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
+    from scout_agent.indeed_search import SOURCES as INDEED_SOURCES, SOURCE_PRESETS
     search.add_argument("--coverage-pages", type=_positive_int, default=2, help="每 source 每次深页数量（默认 2）")
     search.add_argument("--max-depth", type=_positive_int, default=15, help="轮转最大页码（默认 15，至少 2）")
-    search.add_argument("--keyword", action="append", choices=tuple(dict.fromkeys((*KEYWORDS, *INDEED_SOURCES, "求人一覧", "求人検索", "おすすめ求人", "サーバ・クラウド（設計・構築）", "DevOps・SRE"))), help="已验证 source label，可重复；不是任意关键词搜索")
+    search.add_argument("--keyword", action="append", choices=tuple(dict.fromkeys((*KEYWORDS, *INDEED_SOURCES, "求人一覧", "求人検索", "おすすめ求人", "サーバ・クラウド（設計・構築）", "DevOps・SRE"))), help="白名单 source label，可重复；不是任意关键词搜索；Indeed 新词待独立 live probe")
+    search.add_argument("--source-preset", choices=tuple(SOURCE_PRESETS), help="Indeed 来源预设：development 云相关开发 / infra Cloud/Infra / all 全部；不能与 --keyword 混用")
     search.add_argument("--probe", action="store_true", help="CDP 只读结构检查：0 模型调用、无数据库/报告；每来源仅第一页，最多 5 个详情")
     scan = sub.add_parser("scan", help="Run one read-only scan")
     scan.add_argument("--platform", required=True, choices=ADAPTERS.keys())
@@ -150,6 +151,10 @@ def main(
     if args.command == "search":
         from scout_agent.green_discovery import probe_command, GreenSearchDOMPending
         try:
+            if args.source_preset:
+                if args.platform != 'indeed' or args.keyword:
+                    raise ValueError('source-preset 仅用于 Indeed，不能与 keyword 混用')
+                args.keyword = list(SOURCE_PRESETS[args.source_preset])
             if args.probe and args.platform != "green":
                 raise ValueError("Forkwell 不支持 Green probe")
             if args.probe:

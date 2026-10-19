@@ -1,4 +1,4 @@
-"""Read-only Indeed Japan search, limited to verified first-page sources."""
+"""Read-only Indeed Japan search; new query labels require independent live probes."""
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from scout_agent.indeed_discovery import SNAPSHOT, challenge_url, detail, identity, same_origin, validate
@@ -7,7 +7,24 @@ from scout_agent.platform_discovery import login_url
 from scout_agent.search_platforms import FIELDS, Job, job_identity
 
 ORIGIN = 'https://jp.indeed.com'
-SOURCES = ('インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps', 'AWS バックエンドエンジニア', 'クラウドネイティブ 開発', 'AWS フルスタックエンジニア')
+INFRA_SOURCES = ('インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps')
+CLOUD_DEV_SOURCES = ('AWS バックエンドエンジニア', 'クラウドネイティブ 開発', 'AWS フルスタックエンジニア')
+GENERAL_DEV_SOURCES = ('バックエンドエンジニア', 'フルスタックエンジニア', 'サーバーサイドエンジニア')
+SOURCES = INFRA_SOURCES + CLOUD_DEV_SOURCES + GENERAL_DEV_SOURCES
+SOURCE_PRESETS = {'development': GENERAL_DEV_SOURCES + CLOUD_DEV_SOURCES,
+                  'infra': INFRA_SOURCES, 'all': SOURCES}
+SOURCE_PRESET_LABELS = {'development': '云相关开发', 'infra': 'Cloud/Infra', 'all': '全部'}
+
+
+def prioritize_sources(sources):
+    """Keep platform whitelists separate; spend mixed budgets on development first."""
+    sources = tuple(sources)
+    if any(source not in SOURCES for source in sources):
+        raise ValueError('Indeed source 无效')
+    if any(source in SOURCE_PRESETS['development'] for source in sources):
+        return tuple(s for s in SOURCE_PRESETS['development'] if s in sources) + tuple(
+            s for s in sources if s in INFRA_SOURCES)
+    return sources
 
 
 def job_from_url(url, fields):
@@ -81,7 +98,7 @@ class IndeedSearchAdapter:
 
     def source_url(self, label, page=1):
         if label not in SOURCES or type(page) is not int or page != 1:
-            raise ValueError('Indeed 仅支持已验证关键词第一页')
+            raise ValueError('Indeed 仅支持白名单关键词第一页；新关键词待独立 live probe')
         return ORIGIN + '/jobs?' + urlencode({'q': label})
 
     def validate_job(self, job):
