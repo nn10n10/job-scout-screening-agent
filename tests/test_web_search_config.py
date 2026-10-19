@@ -299,6 +299,7 @@ def test_paging_fields_visibility_switches_with_platform():
     render = re.search(r'function renderSources\(\) \{.*?\n\}', template, re.S).group()
     script = r"""
 const assert = require('node:assert/strict');
+const sourcePresets = {}, sourcePresetLabels = {};
 const names = ['coverage_pages', 'max_depth'];
 const fields = Object.fromEntries(names.map(n => [n, {hidden:false}]));
 let rendered = [];

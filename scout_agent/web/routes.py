@@ -94,7 +94,7 @@ def search_pool(
     from .search_pool import PAGE_SIZES, STATUSES, VERDICTS, PLATFORMS, pool_url, query_pool, source_label
     from .viewmodels import search_cards
     from .search_runs import KEYWORDS, LIMITS
-    from scout_agent.indeed_search import SOURCES as INDEED_SOURCES
+    from scout_agent.indeed_search import SOURCES as INDEED_SOURCES, SOURCE_PRESETS, SOURCE_PRESET_LABELS
     def selection(name, values, allowed, default):
         if values is None:
             if name + '_present' in request.query_params:
@@ -126,6 +126,7 @@ def search_pool(
             'indeed': INDEED_SOURCES, 'findy': ['おすすめ求人'], 'type': ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'],
             'doda': ['インフラエンジニア'], 'mynavi': ['インフラエンジニア'],
         }.items()},
+        "source_presets": {'indeed': SOURCE_PRESETS}, "source_preset_labels": SOURCE_PRESET_LABELS,
         "cards": search_cards(pool['results'], pool['states']), "sources": KEYWORDS, "limits": LIMITS,
         "csrf_token": request.app.state.search_runs.csrf_token,
     }, headers=PRIVATE_HEADERS)

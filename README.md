@@ -434,7 +434,7 @@ PYTHONPATH="$PWD" .venv/bin/python -m scout_agent.platform_discovery \
 仅允许 `https://jp.indeed.com`，仅读取已打开 tabs，不导航、点击、刷新、关闭或登录。输出 `/jobs`、SEO 固定 shape、jk 链接种类计数、固定 query key presence、`start` 分页候选、详情 selector bool 与 JSON-LD JobPosting 固定字段 presence；不输出真实关键词、location、jk、tracking value、公司、职位或 JD。只有 exact `/viewjob` current 与同源 canonical 的单个合法 jk 一致，才报告 `jk` 身份候选。challenge、登录、加载、页面漂移和异常快照 fail-closed；不绕过 CAPTCHA。Bridge/tests 仅使用虚构数据，Stage A discovery 保留；生产接入依据 supervisor 已验证 live evidence，分页 offset 仍待验证。
 
 Active Search 现支持 8 个平台：Green、Forkwell、LAPRAS、Findy、Type、doda、マイナビ転職、Indeed。
-Indeed：`python -m scout_agent search indeed --keyword インフラエンジニア`，默认 recall-first 扫描 インフラエンジニア、クラウドエンジニア、SRE、DevOps 四个关键词，不固定 location。目前 page1-only，不推测 start offset、不推进分页游标。职位身份为 `indeed:<jk>`；只保存严格 canonical `/viewjob?jk=<jk>`，tracking 链接不持久化。详情使用 JobPosting 固定字段及已验证局部 DOM fallback，读取前后校验 current/canonical/jk；challenge、登录、加载、漂移、缺标题或职责均安全停止，不绕过 CAPTCHA。保持缓存、人工状态、namespace 和 POLICY_VERSION；本轮仅虚构离线验证，完成后等待 supervisor，未运行 live production Search。
+Indeed：`python -m scout_agent search indeed --keyword インフラエンジニア`，默认 recall-first 扫描十个白名单来源（TASK-016 开发优先），包括原有 インフラエンジニア、クラウドエンジニア、SRE、DevOps，不固定 location。目前 page1-only，不推测 start offset、不推进分页游标。职位身份为 `indeed:<jk>`；只保存严格 canonical `/viewjob?jk=<jk>`，tracking 链接不持久化。详情使用 JobPosting 固定字段及已验证局部 DOM fallback，读取前后校验 current/canonical/jk；challenge、登录、加载、漂移、缺标题或职责均安全停止，不绕过 CAPTCHA。保持缓存、人工状态、namespace 和 POLICY_VERSION；本轮仅虚构离线验证，完成后等待 supervisor，未运行 live production Search。
 
 
 TASK-015：Search 使用 `cloud-app-search-0.2.0` 缓存版本，历史评价与手动状态保留，不自动重算 Scout。开发子类别为 `CLOUD_APP_DEV`。仅 Indeed 的已验证关键词参数增加 AWS Backend、云原生开发、AWS Full-stack 三个来源，继续 page1-only、`indeed:<jk>` 去重；WebUI/sessionStorage/CLI 默认来源同步。其他七个平台沿用已验证入口，新增路由留待 discovery；开发岗位不再因职种本身被本地预筛排除。
@@ -442,3 +442,52 @@ TASK-015：Search 使用 `cloud-app-search-0.2.0` 缓存版本，历史评价与
 历史 Scout 复核：先以 `python -m scout_agent reprocess --help` 查看本地重筛参数，再用目标平台及 `--dry-run` 审查；模型重评必须显式选择记录/provider，使用 `--replace-provider`，不得默认批量 `--force` 或覆写已完成 Codex 评价。此次开发未读取或修改真实数据。
 
 例如仅预览 doda 的旧 mock 候选：`python -m scout_agent reprocess --platform doda --dry-run`；审查后显式执行 `python -m scout_agent reprocess --platform doda`，再用 `python -m scout_agent evaluate --platform doda --eligible-only --replace-provider mock --dry-run` 检查选择范围。确认模型配置及记录后才移除最后一个 `--dry-run`。`--replace-provider mock` 不选择已有 Codex 评价；没有默认自动重算。
+
+### TASK-016：开发岗位来源与预算优先级
+
+Indeed 现在保留原四个 Cloud/Infra 来源和原三个云开发来源，并新增三个独立、无 AWS 限定的 `/jobs?q=<label>` 来源：`バックエンドエンジニア`、`フルスタックエンジニア`、`サーバーサイドエンジニア`。新增 q 仅通过离线 URL shape、虚构 snapshot 与身份检查，**尚未 live verified**。严格 page1-only、canonical、`indeed:<jk>`、challenge fail-closed 不变，不生成 offset。
+
+```bash
+# 只访问开发来源（通用 Backend / Full-stack / Server-side + 原三个云开发来源）
+python -m scout_agent search indeed --source-preset development --max-jobs 10 --max-model-jobs 5
+# 只访问原四个 Cloud/Infra 来源
+python -m scout_agent search indeed --source-preset infra
+# 混合来源：开发优先
+python -m scout_agent search indeed --source-preset all
+# 也可以重复 --keyword 精确选择；不能与 --source-preset 混用
+python -m scout_agent search indeed --keyword バックエンドエンジニア --keyword サーバーサイドエンジニア
+```
+
+WebUI 的 Indeed 扫描范围提供「云相关开发」「Cloud/Infra」「全部」预设，可继续逐项勾选；sessionStorage 保存实际选中来源，后端按当前平台独立白名单校验。预设不会启动扫描。CLI 与 WebUI 都在混合选择时按通用开发三来源、原云开发三来源、Infra 的顺序执行（仅保留选中项），因此此前 Infra 不会抢先耗尽详情/模型预算或触发 early_stop。仅开发也优先通用三职种，仅 Infra 时保留选择顺序。Indeed 每轮每来源最多读取一个详情，再轮转到下一来源；增量模式缓存命中、重复 jk 和列表排除不占详情轮次，空列表让出轮次，安全停止立即终止，不重试绕过。第一页仅获取一次，剩余卡片在后续轮次继续处理。三个通用开发来源均有有效候选且详情预算 >=3 时可各读取一个详情，六个开发来源均有候选且预算 >=6 时可覆盖六个来源；前提是未先触发安全停止或固定页 early_stop。预算仍共享，模型预算很小不保证每来源都有 AI 结果；想确认某一职种应独立选择该来源。默认增量模式会跳过已缓存职位并继续尝试后续开发来源；兼容固定页模式维持原有详情读取/early_stop 行为。
+
+这次只改变 source discovery 与选择优先级，`POLICY_VERSION` 保持 `cloud-app-search-0.2.1`，不批量重算历史、不改变人工状态。普通开发岗位不能仅凭来源名或技术栈确认为云开发；必须有实质云服务实现/部署职责，日语主、年收 >=450万、本岗位明确客先常驻/SES/派遣先勤務硬排除、地点/配属未知保持 MAYBE/POSSIBLE 等规则沿用 TASK-015。
+
+| 平台 | 新开发 source 证据状态 | 下一步 |
+| --- | --- | --- |
+| Green | `PENDING_LIVE_SOURCE_EVIDENCE`；现有 AWS/SRE/DevOps/Terraform/Kubernetes/インフラ，不证明开发职种 route | 授权 Chrome 中人工选择 backend/fullstack/server-side，记录最终 source URL、canonical、链接及分页证据 |
+| Type | `PENDING_LIVE_SOURCE_EVIDENCE`；已有两个云/Infra 职种，未证明新开发 category | 同上，独立确认 category 与 page1 DOM 后才启用 |
+| doda | `PENDING_LIVE_SOURCE_EVIDENCE`；现有インフラ类别与分页不证明开发 route | 同上，不推测 category 或复用未经证实的分页 |
+| マイナビ転職 | `PENDING_LIVE_SOURCE_EVIDENCE`；现有インフラ类别不证明开发 route | 同上，不猜 URL 或 selector |
+| Forkwell / LAPRAS / Findy | 保留现有通用/推荐列表 | 不宣称支持按新关键词搜索；筛选后的开发召回不等于新关键词来源 |
+
+新增 Indeed q 的实际成功也必须由用户在独立授权 Chrome 环境逐项只读 probe：确认 q 未漂移、无 challenge、第一页卡片 jk 与详情 canonical 一致，再由 supervisor 验收。本 Bridge worktree 不访问浏览器、招聘站或付费模型。
+
+
+#### Indeed：零数据库、零模型的独立 live discovery
+
+`search indeed --probe` **不支持**；请使用现有 `platform_discovery` 命令。以下步骤仅供用户在另行授权的 Chrome 环境执行，本轮开发不执行：
+
+1. 在已认证的 Chrome 中人工分别打开以下三个第一页（不要添加 `start`/offset）：
+   - `https://jp.indeed.com/jobs?q=バックエンドエンジニア`
+   - `https://jp.indeed.com/jobs?q=フルスタックエンジニア`
+   - `https://jp.indeed.com/jobs?q=サーバーサイドエンジニア`
+2. 人工确认每页地址中的 q 与所选标签一致；为每个来源人工打开一个合法详情 `/viewjob?jk=<jk>`，保留三个列表及三个详情标签页。不要应募、收藏或发送消息。遇到登录或 challenge，由用户手动处理，工具不绕过。
+3. 对已开启本机 CDP 的该 Chrome 执行（端口替换为实际本机端口）：
+
+```bash
+python -m scout_agent.platform_discovery --cdp-endpoint http://127.0.0.1:9222 --platform indeed
+```
+
+该命令仅 evaluate 已打开的标签页（每平台最多十页），不导航、点击、刷新或登录，不打开 SQLite，不初始化分类器，模型额度为零。请确保三个来源及详情都在十页范围内，必要时逐组执行。退出码 0 仅说明结构读取无安全失败，不能单独证明新来源 live 成功。
+
+逐来源验收：列表须 `safe_failure_category=NONE`、`source_route=jobs-query`、`query_keys_present.q=true`、`jk_link_count>0`；人工确认 q 未漂移、仅第一页。详情须 `page_kind=detail`、`stable_identity_candidate=jk`、`canonical_pattern=/viewjob?jk=:id`，并确认标题/职责字段存在及列表卡片 jk 与详情一致。输出经过脱敏，不包含 q 值或真实 jk，因此必须保留人工逐来源对应关系，不能仅凭一组 JSON 宣称三个 q 均成功。canonical 不匹配时可能仍返回 `NONE`，但 identity/canonical 为空，此时不通过验收。任何 challenge、NEEDS_LOGIN、加载或字段缺失均停止验收。仅经独立成功证据与 supervisor 确认后才能标记 live verified。
