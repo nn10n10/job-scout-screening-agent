@@ -7,22 +7,36 @@
   <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
 </head>
 <body>
-<a href="/search">Green Search 主动搜索候选池</a>
+  <nav class="topnav" aria-label="主导航">
+    <div class="topnav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">JS</span>
+        <span>Job Scout</span>
+        <span class="readonly-tag">READ-ONLY</span>
+      </a>
+      <div class="topnav-links">
+        <a href="/" aria-current="page">结果浏览</a>
+        <a href="/search">主动搜索</a>
+      </div>
+    </div>
+  </nav>
   <main class="shell">
     <header class="page-header">
       <p class="eyebrow">JOB SCOUT · READ-ONLY</p>
       <h1>职位评价 Dashboard</h1>
       <p class="intro">浏览本地结果，或手动运行标准 Scout daily；招聘网站操作严格只读。</p>
     </header>
-    <section aria-label="Scout daily">
-      <strong>Scout 筛选</strong>
-      <div id="daily-platforms">
-        {% for value, label in [('green', 'Green'), ('type', 'type'), ('doda', 'doda'), ('mynavi', 'マイナビ転職')] %}
-        <label><input type="checkbox" value="{{ value }}" checked> {{ label }}</label>
-        {% endfor %}
-        <button type="button" id="daily-all">全部</button>
+    <section class="daily-panel" aria-label="Scout daily">
+      <div class="daily-header">
+        <strong>Scout 筛选</strong>
+        <div id="daily-platforms">
+          {% for value, label in [('green', 'Green'), ('type', 'type'), ('doda', 'doda'), ('mynavi', 'マイナビ転職')] %}
+          <label><input type="checkbox" value="{{ value }}" checked> {{ label }}</label>
+          {% endfor %}
+          <button type="button" id="daily-all" class="btn-ghost">全部</button>
+        </div>
+        <button type="button" id="daily-run" class="btn" data-csrf="{{ daily_csrf_token }}">▶ 运行所选平台</button>
       </div>
-      <button type="button" id="daily-run" data-csrf="{{ daily_csrf_token }}">▶ 运行所选平台</button>
       <p id="daily-status" role="status" aria-live="polite">正在获取运行状态…</p>
       <div id="daily-platform-status" aria-live="polite"></div>
     </section>
@@ -86,14 +100,14 @@
       <fieldset class="status-filter"><legend>人工状态（仅本地标记）</legend>
         <input type="hidden" name="status_present" value="1">
         {% for status in status_options %}<label><input type="checkbox" name="status" value="{{ status }}" {% if status in filters.status %}checked{% endif %}>{{ status_labels[status] }}</label>{% endfor %}
-        <button type="button" id="all-statuses">全部</button>
+        <button type="button" id="all-statuses" class="btn-ghost">全部</button>
       </fieldset>
       <input type="hidden" name="page" value="1">
       <label class="field">每页条数<select name="page_size">
         {% for size in page_sizes %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}
       </select></label>
       <div class="filter-actions">
-        <button type="submit">筛选</button>
+        <button type="submit" class="btn">筛选</button>
         <a href="/">重置</a>
       </div>
     </form>
@@ -135,7 +149,7 @@
               <div class="links">
                 <span>{{ status_labels[states[card.scout_id]] }}</span>
                 <div class="state-actions" data-scout-id="{{ card.scout_id }}">
-                  {% for status in status_options if status != states[card.scout_id] %}<button type="button" data-status="{{ status }}">{{ '恢复未处理' if status == 'ACTIVE' else ('排除' if status == 'EXCLUDED' else '已投递') }}</button>{% endfor %}
+                  {% for status in status_options if status != states[card.scout_id] %}<button type="button" class="btn-ghost" data-status="{{ status }}">{{ '恢复未处理' if status == 'ACTIVE' else ('排除' if status == 'EXCLUDED' else '已投递') }}</button>{% endfor %}
                 </div>
                 {% if card.detail_url %}
                   <a href="{{ card.detail_url }}" target="_blank" rel="noopener noreferrer">查看职位 ↗</a>

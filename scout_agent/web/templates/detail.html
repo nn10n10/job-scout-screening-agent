@@ -7,6 +7,19 @@
   <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
 </head>
 <body>
+  <nav class="topnav" aria-label="主导航">
+    <div class="topnav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">JS</span>
+        <span>Job Scout</span>
+        <span class="readonly-tag">READ-ONLY</span>
+      </a>
+      <div class="topnav-links">
+        <a href="/">结果浏览</a>
+        <a href="/search">主动搜索</a>
+      </div>
+    </div>
+  </nav>
   <main class="shell detail-shell">
     <nav class="back-nav"><a href="/">← 返回 Dashboard</a></nav>
     <article class="detail-panel">

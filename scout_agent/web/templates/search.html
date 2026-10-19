@@ -1,7 +1,21 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Search 候选池</title><link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}"></head>
-<body><main class="shell"><a href="/">Scout 筛选 Dashboard</a>
+<body>
+<nav class="topnav" aria-label="主导航">
+  <div class="topnav-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">JS</span>
+      <span>Job Scout</span>
+      <span class="readonly-tag">READ-ONLY</span>
+    </a>
+    <div class="topnav-links">
+      <a href="/">结果浏览</a>
+      <a href="/search" aria-current="page">主动搜索</a>
+    </div>
+  </div>
+</nav>
+<main class="shell">
 <header class="page-header"><p class="eyebrow">SEARCH · READ-ONLY</p><h1>Search 增量搜索</h1>
 <p>来源：search（主动搜索）。按钮启动本地只读扫描，需要已登录的 Chrome CDP。</p></header>
 <form id="search-form" class="search-controls">
@@ -10,8 +24,8 @@
 {% for name,label,help in [('coverage_pages','每轮深页数','每轮每个来源额外扫描多少个深页'),('max_depth','最大扫描页','每个来源扫描的最大页码')] %}<label class="field search-basic">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}
 <button type="button" class="search-advanced-toggle" aria-expanded="false" aria-controls="search-advanced-panel">高级设置</button><div class="search-advanced-panel" id="search-advanced-panel" hidden>{% for name,label,help in [('max_jobs','详情读取上限','本次最多读取多少个职位详情'),('max_model_jobs','AI 评价上限','本次最多评价多少个职位'),('codex_batch_size','Codex 批次大小','仅影响本次搜索，不修改全局配置')] %}<label class="field">{{ label }}<input name="{{ name }}" type="number" value="{{ limits[name][0] }}" min="{{ limits[name][1] }}" max="{{ limits[name][2] }}" required><small>{{ help }}</small></label>{% endfor %}</div>
 <p id="pagination-note" hidden>LAPRAS 当前固定扫描 /jobs/home 第一页，分页尚未验证。</p>
-<button id="start" type="submit" disabled>开始增量搜索</button></form>
-<section class="dashboard-summary"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="error"></p><details><summary>查看详细统计</summary><p id="time"></p><pre id="output"></pre></details></section>
+<button id="start" type="submit" class="btn" disabled>开始增量搜索</button></form>
+<section class="search-status-panel"><h2>本轮搜索状态/统计</h2><p id="state" role="status" aria-live="polite">加载状态…</p><p id="error"></p><details><summary>查看详细统计</summary><p id="time"></p><pre id="output"></pre></details></section>
 <h2>当前候选池</h2><p>这是历史持久化候选池，并非仅本轮结果。默认显示 TARGET / POSSIBLE，可按评价、平台及人工状态切换。</p>
 <form action="/search" method="get" class="pool-filters">
 <input type="hidden" name="page" value="1">
@@ -27,7 +41,7 @@
 {% else %}<button type="button" data-filter-preset="all">全部平台</button>{% endif %}
 </fieldset>{% endfor %}
 <label>每页 <select name="page_size">{% for size in [10, 20, 50] %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select> 条</label>
-<button type="submit">应用筛选</button>
+<button type="submit" class="btn">应用筛选</button>
 </form>
 <p>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页</p>
 <nav class="state-filters" aria-label="候选池分页">
