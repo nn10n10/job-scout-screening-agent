@@ -7,7 +7,7 @@ from scout_agent.platform_discovery import login_url
 from scout_agent.search_platforms import FIELDS, Job, job_identity
 
 ORIGIN = 'https://jp.indeed.com'
-SOURCES = ('インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps')
+SOURCES = ('インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps', 'AWS バックエンドエンジニア', 'クラウドネイティブ 開発', 'AWS フルスタックエンジニア')
 
 
 def job_from_url(url, fields):

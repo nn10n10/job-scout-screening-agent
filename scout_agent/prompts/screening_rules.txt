@@ -4,16 +4,7 @@ MAYBE：存在潜在价值，但信息不足或有需要人工确认的重要疑
 SKIP：现有信息已经存在与用户目标明显冲突的条件；不能只因为 Scout 正文缺失而判 SKIP。
 理由和疑虑应简短、有文本依据；不要重复或推测。
 
-判断优先级：先确定岗位的主要工作职责，再看技术关键词。KEEP 的必要条件是
-Cloud / Infrastructure / Platform / DevOps / SRE 或 Cloud-native infrastructure
-明确属于该岗位的主要职责之一；仅出现 AWS、Terraform、CI/CD、ECS 等技术词不足以判 KEEP。
-职位名称可以是线索，但须结合 JD 的实际职责；不能仅凭职位名称或技术栈推定主要职责。
-如果主要职责是 Web/Application、Backend/Frontend 开发、PM/Leader/People Management、
-Presales 或客户业务系统开发，而 Cloud/Infra 只是附带工作或团队协作，原则上 MAYBE 或 SKIP，
-不得仅因使用 AWS/Terraform、偶尔维护 ECS、与 SRE 协作或兼管部分云基础设施而判 KEEP。
-对这类岗位，有潜在价值但职责比例不明时判 MAYBE；有明确冲突时判 SKIP。
-Cloud/Infrastructure/Platform/DevOps Engineer、SRE，以及以 Cloud-native infrastructure
-为核心职责的岗位优先考虑 KEEP；若 JD 与职位名称冲突，以实际职责为准。
+先确定岗位的主要工作职责，再看技术关键词。仅出现 AWS、Terraform、CI/CD 不足以判 KEEP。Cloud/Infrastructure/Platform/DevOps/SRE 主责仍优先。Backend/Server-side/Full-stack 或云上应用开发也可 KEEP/TARGET：须引用 JD 实际职责中云服务开发、实现或部署的证据（AWS 托管后端、Lambda/API Gateway/DynamoDB、ECS/EKS、云原生服务等），不要求亲自管理基础设施。仅技术标签、职责不清或自社勤務/客先配属未知则 MAYBE/POSSIBLE；明确纯非云开发不提升。岗位明确客先常駐、派遣先勤務或 SES 案件配属必须 SKIP/DROP，优先于技术匹配；客先常駐なし / SESなし不可误伤，公司有 SES 业务不代表本岗位驻场，在自社办公室受托开发也不等同驻场。保留日语主、450万底线/500万期望、Remote/Hybrid、无强制 Casual、K8s 非必要的既有偏好。
 
 优先：AWS / Cloud Engineer / Platform Engineer / DevOps / SRE；AWS；Terraform / IaC；
 CI/CD；Docker、ECS、容器；自社产品、自社服务或内製开发；Remote / Hybrid；
@@ -28,3 +19,5 @@ Helpdesk、纯监视值守、高频夜间 On-call。
 Scout 正文缺失但 JD 存在时仍正常评价，在 concerns 加入：
 Scout 正文不可用；本次主要依据职位描述评价。
 不要凭空判断公司文化、加班量、1on1、自社/SES 性质；没有直接证据就保持 null/unknown。
+
+自社製品/自社サービス/内製仅证明产品或组织性质，不证明本岗位自社办公室勤務或非派遣；工作地点/配属未知仍为 MAYBE。

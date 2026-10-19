@@ -81,9 +81,7 @@ def test_mynavi_cloud_product_development_is_not_infrastructure(title, outline, 
                           "jobContentDetail: フロントエンドとバックエンドの開発を担当。")
     assert not mynavi_primary_target_duty(scout.jd_text)
     result = reprocess_stored_scout(scout)
-    assert result.decision == "local_skip"
-    assert result.model_name == "mynavi-detail-prefilter"
-    assert category in result.reason
+    assert result.decision == "classifier_candidate"
 
 
 @pytest.mark.parametrize("title,outline", [
@@ -192,6 +190,9 @@ def test_mynavi_detail_prefilter_skips_evidenced_non_target_main_duties(
                   jd_text=f"jobContentOutline: {outline}\n"
                           "jobContentDetail: AWS や Terraform の使用経験がある方を歓迎。")
     result = reprocess_stored_scout(scout)
+    if category in {"System/Package", "Application/Web", "Backend/Frontend", "社会基础设施"} and "PMO" not in title:
+        assert result.decision == "classifier_candidate"
+        return
     assert result.decision == "local_skip"
     assert result.model_name == "mynavi-detail-prefilter"
     assert category in result.reason
@@ -232,7 +233,8 @@ def test_mynavi_does_not_treat_domain_or_incidental_cloud_as_primary_infra(title
     scout = Scout(platform="mynavi", job_title=title,
                   jd_text=f"jobContentOutline: {outline}\n"
                           "jobContentDetail: 開発環境には AWS と Terraform を利用。")
-    assert reprocess_stored_scout(scout).decision == "local_skip"
+    expected = "classifier_candidate" if title in {"AWSエンジニア", "ITエンジニア", "ソフトウェアエンジニア"} else "local_skip"
+    assert reprocess_stored_scout(scout).decision == expected
 
 
 def _ref(index: int, *, job_title: str | None = None, age: int = 1) -> MynaviScoutRef:

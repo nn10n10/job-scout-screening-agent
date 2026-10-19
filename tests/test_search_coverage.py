@@ -92,7 +92,7 @@ def test_budget_still_scans_all_sources_page_one(store):
 
 def test_partial_deep_page_retries_before_later_pages(store):
     store.advance_source('AWS', 4)
-    data = {('AWS', 1): [job(1, title='Frontend')],
+    data = {('AWS', 1): [job(1, title='Designer')],
             ('AWS', 4): [job(4), job(5), job(6)],
             ('AWS', 5): [job(7)], ('SRE', 1): [job(100)]}
     adapter, model = FakeGreen(data), FakeCodex()
@@ -129,7 +129,7 @@ def test_model_budget_holds_deep_cursor_and_resumes_saved_details(store, saved_d
     if saved_details:
         for candidate in candidates:
             store.save_job(candidate)
-    data = {('AWS', 1): [job(1, title='Frontend')],
+    data = {('AWS', 1): [job(1, title='Designer')],
             ('AWS', 4): candidates, ('AWS', 5): [job(7)],
             ('SRE', 1): [job(100)]}
     adapter, model = FakeGreen(data), FakeCodex()

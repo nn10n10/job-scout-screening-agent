@@ -239,7 +239,7 @@ class CodexClassifier(BaseClassifier):
             "IDs must match exactly; output order does not matter. "
             "Use KEEP when existing evidence makes the job worth the user's own review and possible progress; "
             "KEEP does not imply high hiring probability, every MUST is met, or that applying is certain. "
-            "KEEP also requires Cloud/Infrastructure/Platform/DevOps/SRE to be a primary job responsibility; "
+            "KEEP requires Cloud/Infrastructure/Platform/DevOps/SRE main duties OR evidenced substantive cloud application development (Backend/Server-side/Full-stack), without requiring infrastructure ownership. Unknown workplace/client assignment means MAYBE. Product ownership (自社製品/自社サービス/内製) alone does not establish an in-house workplace or non-dispatch assignment. Explicit client-site/SES assignment means SKIP; negations and company SES history alone do not. "
             "AWS/Terraform/CI/CD keywords alone are insufficient. Judge actual duties over title or tech stack. "
             "Use MAYBE for potential value with important unknowns or doubts; SKIP for clear conflict. "
             "Unknown fields must be null. All summary/reasons/concerns prose must be concise Simplified Chinese; "

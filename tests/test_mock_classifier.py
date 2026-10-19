@@ -5,7 +5,7 @@ from scout_agent.models.scout import Scout
 
 
 def test_mock_keeps_matching_fixture():
-    scout = Scout(platform="generic", job_title="AWS Engineer", jd_text="Terraform を使用。", salary_text="年収500万円〜")
+    scout = Scout(platform="generic", job_title="AWS Engineer", jd_text="AWS 基盤を設計・構築。Terraform を使用。", salary_text="年収500万円〜")
     result = MockClassifier().classify(scout)
     assert result.verdict == "KEEP"
     assert result.aws is True
@@ -54,6 +54,6 @@ def test_mock_does_not_keep_secondary_cloud_work(job_title, jd_text):
     "job_title",
     ["Cloud Engineer", "Infrastructure Engineer", "Platform Engineer", "DevOps Engineer", "SRE", "クラウド基盤エンジニア"],
 )
-def test_mock_keeps_clear_target_roles_without_requiring_keywords(job_title):
+def test_mock_does_not_keep_titles_without_duty_evidence(job_title):
     result = MockClassifier().classify(Scout(platform="generic", job_title=job_title))
-    assert result.verdict == "KEEP"
+    assert result.verdict == "MAYBE"

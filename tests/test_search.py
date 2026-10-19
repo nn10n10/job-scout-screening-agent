@@ -71,7 +71,7 @@ def test_multiple_keywords_deduplicate(store):
     assert store.current_results()[0][0].matched_keywords == ['AWS', 'SRE']
 
 
-@pytest.mark.parametrize('title', ['Frontend', 'iOS', 'Android', 'Designer', 'Sales', 'HR', 'Marketing', 'QA-only', 'Helpdesk-only', 'Backend-only'])
+@pytest.mark.parametrize('title', ['iOS', 'Android', 'Designer', 'Sales', 'HR', 'Marketing', 'QA-only', 'Helpdesk-only'])
 def test_list_zero_token_drop(store, title):
     _, stats, adapter, model = run(store, [job(title=title)])
     assert stats['list_drops'] == 1 and stats['DROP'] == 1
@@ -91,7 +91,7 @@ def test_ambiguous_titles_survive(title):
     ({'responsibilities': '客先常駐なし。自社 AWS 基盤'}, False),
     ({'responsibilities': 'ヘルプデスクのみ'}, True),
     ({'responsibilities': '監視業務のみ'}, True),
-    ({'responsibilities': 'バックエンド開発のみ。AWS 環境'}, True),
+    ({'responsibilities': 'バックエンド開発のみ。AWS 環境'}, False),
     ({'responsibilities': 'AWS 基盤設計', 'required': 'Kubernetes/EKS 未経験可'}, False),
     ({'responsibilities': 'AWS 基盤設計', 'required': 'ArgoCD/Istio/observability 経験歓迎'}, False),
 ])
@@ -142,15 +142,15 @@ def test_early_stop(store):
 
 
 def test_pagination_bounded(store):
-    adapter = FakeGreen({('AWS', p): [job(p, title='Frontend')] for p in range(1, 10)})
+    adapter = FakeGreen({('AWS', p): [job(p, title='Designer')] for p in range(1, 10)})
     _, stats = run_search(adapter, store, FakeCodex(), keywords=['AWS'], pages_per_keyword=2)
     assert adapter.pages == [('AWS', 1), ('AWS', 2)] and stats['raw_cards'] == 2
 
 
 def test_report_and_web_drop_count_only(store, tmp_path):
-    results, stats, _, _ = run(store, [job(), job(2, title='Frontend')])
+    results, stats, _, _ = run(store, [job(), job(2, title='Designer')])
     html = render_search(results, stats)
-    assert 'POSSIBLE' in html and 'DROP：1' in html and 'Frontend' not in html
+    assert 'POSSIBLE' in html and 'DROP：1' in html and 'Designer' not in html
     assert 'matched keyword：AWS' in html and '来源：search' in html
     assert 'Remote：UNKNOWN' in html and '/company/900001/job/1' in html
     paths = generate_search_report(tmp_path / 'fictional-output', results, stats)
@@ -258,7 +258,7 @@ def test_incomplete_batch_not_saved(store):
 
 
 def test_fifty_cards_low_token_funnel_and_repeat(store):
-    jobs = [job(i, title='Frontend') for i in range(1, 26)]
+    jobs = [job(i, title='Designer') for i in range(1, 26)]
     jobs += [job(i, salary='300〜400万円') for i in range(26, 36)]
     jobs += [job(i) for i in range(36, 51)]
     _, first, _, _ = run(store, jobs)

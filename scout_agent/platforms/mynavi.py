@@ -13,6 +13,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
+from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict, confirmed_inhouse_workplace
 from .type_jp import TYPE_CLIENT_ASSIGNMENT, TYPE_INHOUSE_NO_CLIENT
 from .doda import _job_outline, doda_detail_prefilter
 from .base import PlatformAdapter
@@ -230,6 +231,8 @@ def mynavi_primary_target_duty(jd_text: str | None) -> bool:
 
 def mynavi_detail_prefilter(scout: Scout) -> str | None:
     """Conservatively exclude evidenced non-target primary duties, never by company."""
+    if preserve_development_candidate(scout.job_title or "", scout.jd_text or ""):
+        return None  # Duty ambiguity belongs to classification, not a local DROP.
     title = (scout.job_title or "").strip()
     outline = _job_outline(scout.jd_text)
     if mynavi_primary_target_duty(scout.jd_text):
@@ -257,11 +260,15 @@ def mynavi_detail_prefilter(scout: Scout) -> str | None:
 
 def mynavi_ses_hard_rule(scout: Scout) -> Evaluation | None:
     """Require combined placement and SES business evidence, or multiple signals."""
+    if client_site_conflict((scout.jd_text or "") + "\n" + (scout.location_text or "")):
+        return Evaluation(verdict="SKIP", confidence=0.95, summary="岗位明确要求客先常駐或派遣配属。", reasons=["明确岗位驻场证据。"], concerns=[], client_site=True)
     jd = scout.jd_text or ""
     if not jd:
         return None
     outline = _job_outline(jd)
     location = scout.location_text or ""
+    if confirmed_inhouse_workplace((outline or jd) + "\n" + location):
+        return None
     if TYPE_INHOUSE_NO_CLIENT.search(" ".join((scout.job_title or "", outline, location))):
         return None
     site = TYPE_CLIENT_ASSIGNMENT.search(" ".join((location, outline)))

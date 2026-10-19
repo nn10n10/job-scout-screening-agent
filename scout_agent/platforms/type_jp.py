@@ -13,6 +13,7 @@ from playwright.sync_api import Error as PlaywrightError, Page
 
 from scout_agent.models.evaluation import Evaluation
 from scout_agent.models.scout import Scout
+from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict, confirmed_inhouse_workplace
 from .base import PlatformAdapter
 
 
@@ -42,7 +43,7 @@ NON_TARGET_ROLE = re.compile(
     r"営業|買取|施工管理|事務|ドライバー|ビル[・\s]?マンション.{0,8}管理|"
     r"設備管理|マンションフロント|SNS運用|Webデザイナー|動画編集|人材管理|"
     r"販売スタッフ|店舗スタッフ|調理師|美容師|保育士|看護師|介護士|"
-    r"フロントエンドエンジニア|Webクリエイター|プロジェクトマネージャー|"
+    r"Webクリエイター|プロジェクトマネージャー|"
     r"プロダクトマネージャー|プリセールス|\bPMO\b|\bPM\b|\bPL\b|"
     r"送迎|ハイヤー運転手|プランナー|管理サポート",
     re.IGNORECASE,
@@ -163,13 +164,15 @@ def prefilter_title(title: str | None) -> TitlePrefilterResult:
     signals = [name for pattern, name in SES_SIGNALS if pattern.search(title)]
     # Target-role signals require the JD to resolve SES risk. Never reject a
     # Cloud/Infra/SRE/etc. title merely because it advertises project economics.
-    if len(signals) >= 2 and not target_signal and not INHOUSE_CLOUD.search(title):
+    if len(signals) >= 2 and not target_signal and not INHOUSE_CLOUD.search(title) and not development_candidate(title, ""):
         return TitlePrefilterResult(
             "TITLE_SKIP", f"标题同时出现多项案件型信号（{'、'.join(signals)}），且无明确自社 Cloud/Infra 主职责。"
         )
     # A named core role wins over incidental words such as 営業が案件紹介.
     if EXPLICIT_TARGET_ROLE.search(title):
         return TitlePrefilterResult("DETAIL", "标题明确提及 Cloud/Infra/SRE/DevOps/Platform/Server/Network 方向。", True)
+    if development_candidate(title, ""):
+        return TitlePrefilterResult("TITLE_REVIEW", "开发岗位需核实云职责与配属。")
     if NON_TARGET_ROLE.search(title):
         return TitlePrefilterResult("TITLE_SKIP", "标题明确指向非目标职种或非 Cloud/Infra 主职责。")
     if target_signal:
@@ -188,8 +191,8 @@ def prefilter_jobs(titles: tuple[str, ...]) -> list[TitlePrefilterResult]:
         decisions = [
             TitlePrefilterResult(
                 "TITLE_SKIP", "同一 offer 已有明确 Cloud/Infra 核心岗位；该泛化或相邻岗位暂不读取 JD。"
-            ) if item.decision != "TITLE_SKIP" and not item.explicit_target else item
-            for item in decisions
+            ) if item.decision != "TITLE_SKIP" and not item.explicit_target and not development_candidate(titles[index], "") else item
+            for index, item in enumerate(decisions)
         ]
     return decisions
 
@@ -213,6 +216,8 @@ def type_primary_target_duty(scout: Scout) -> bool:
 
 def type_detail_local_skip_reason(scout: Scout) -> str | None:
     """Exclude evidenced non-target primary work before evaluating SES risk."""
+    if preserve_development_candidate(scout.job_title or "", scout.jd_text or ""):
+        return None  # Duty ambiguity belongs to classification, not a local DROP.
     jd = scout.jd_text or ""
     primary = _type_primary_jd(jd)
     title = scout.job_title or ""
@@ -246,11 +251,15 @@ def type_detail_local_skip_reason(scout: Scout) -> str | None:
 
 def type_ses_hard_rule(scout: Scout) -> Evaluation | None:
     """Apply the user's non-SES/client-site red line only on combined evidence."""
+    if client_site_conflict((scout.jd_text or "") + "\n" + (scout.location_text or "")):
+        return Evaluation(verdict="SKIP", confidence=0.95, summary="岗位明确要求客先常駐或派遣配属。", reasons=["明确岗位驻场证据。"], concerns=[], client_site=True)
     jd = scout.jd_text or ""
     if not jd:
         return None
     primary = _type_primary_jd(jd)
     location = scout.location_text or ""
+    if confirmed_inhouse_workplace(primary + "\n" + location):
+        return None
     combined = " ".join((scout.job_title or "", jd, scout.salary_text or "", location))
     site = TYPE_CLIENT_ASSIGNMENT.search(location) or TYPE_CLIENT_ASSIGNMENT.search(primary)
     signals = [name for pattern, name in TYPE_STRONG_SES if pattern.search(combined)]
@@ -290,10 +299,10 @@ def type_ses_hard_rule(scout: Scout) -> Evaluation | None:
 def type_post_detail_hard_rule(scout: Scout) -> Evaluation | None:
     """Apply only directly evidenced client-site/SES conflicts after reading JD."""
     jd = scout.jd_text or ""
-    if not jd or SES_NEGATION.search(jd):
+    if not jd:
         return None
-    client_site = bool(CLIENT_SITE_EVIDENCE.search(jd))
-    ses_job = bool(SES_JOB_EVIDENCE.search(jd))
+    client_site = client_site_conflict(jd + "\n" + (scout.location_text or ""))
+    ses_job = bool(re.search(r"SES\s*案件(?:に|へ)?配属", jd, re.I))
     if not client_site and not ses_job:
         return None
     evidence = "客先常駐" if client_site else "SES案件"

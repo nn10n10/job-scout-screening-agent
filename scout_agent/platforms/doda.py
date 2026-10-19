@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from playwright.sync_api import Page
 
 from scout_agent.models.scout import Scout
+from scout_agent.cloud_app_policy import development_candidate, preserve_development_candidate, client_site_conflict
 from .base import PlatformAdapter
 
 
@@ -123,6 +124,8 @@ def _primary_target_duty(jd_text: str | None) -> bool:
 
 def doda_detail_prefilter(scout: Scout) -> str | None:
     """Return a Chinese reason for an evidenced 0-token skip, else None."""
+    if preserve_development_candidate(scout.job_title or "", scout.jd_text or ""):
+        return None  # Duty ambiguity belongs to classification, not a local DROP.
     title = (scout.job_title or "").strip()
     if not title or TARGET_ROLE.search(title) or _primary_target_duty(scout.jd_text):
         return None

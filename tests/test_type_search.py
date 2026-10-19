@@ -482,7 +482,7 @@ def test_single_page_and_namespace(tmp_path):
             assert stats['source_pages']['サーバ・クラウド（設計・構築）'] == [1]
         assert stats['cache_hits'] == 1 and model.classify_jobs.call_count == 1
         for source in sources: assert store.source_cursor(source, 20) == 7
-    assert POLICY_VERSION == 'green-search-0.1.1'
+    assert POLICY_VERSION == 'cloud-app-search-0.2.1'
 
 
 def test_type_web_single_page_controls(tmp_path):
@@ -491,7 +491,7 @@ def test_type_web_single_page_controls(tmp_path):
     with TestClient(create_app(tmp_path / 'fictional.db', search_runner=lambda *args: 0)) as client:
         html = client.get('/search').text
         assert '<option value="type">Type</option>' in html
-        assert "type: ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']" in html
+        assert list(client.get('/search').context['source_labels']['type']) == ['サーバ・クラウド（設計・構築）', 'DevOps・SRE']
         assert "|| form.elements.platform.value === 'type'" in html
         assert 'Type 当前扫描两个已验证职种页的第一页，分页后缀尚未验证' in html
     config = validate_config({'platform': 'type', 'coverage_pages': 'ignored', 'max_depth': None})

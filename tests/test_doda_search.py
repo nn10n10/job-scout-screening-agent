@@ -166,7 +166,7 @@ def test_cli_web_and_telemetry(monkeypatch, capsys, tmp_path):
     with TestClient(create_app(tmp_path/'fictional.db', search_runner=lambda *args: 0)) as client:
         html = client.get('/search').text
         assert '<option value="doda">doda</option>' in html
-        assert "doda: ['インフラエンジニア']" in html
+        assert list(client.get('/search').context['source_labels']['doda']) == ['インフラエンジニア']
 
 
 def test_cache_cursor_namespace(tmp_path):
@@ -186,7 +186,7 @@ def test_cache_cursor_namespace(tmp_path):
         assert stats['cache_hits'] == 1 and model.classify_jobs.call_count == 1
         assert store.source_cursor('doda:'+SOURCES[0], 15) != 2
         for source in history: assert store.source_cursor(source, 15) == 7
-    assert POLICY_VERSION == 'green-search-0.1.1'
+    assert POLICY_VERSION == 'cloud-app-search-0.2.1'
 
 
 def test_badge_link_and_identity():

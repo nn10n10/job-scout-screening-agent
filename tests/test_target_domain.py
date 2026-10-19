@@ -36,9 +36,9 @@ from scout_agent.target_domain import assess_target_domain
     ("社内SE", "jobContentOutline: 社内PCとアカウント管理、ヘルプデスクを担当。",
      "TARGET_REJECTED", "NONE"),
     ("Web Engineer", "jobContentOutline: AWS 上で稼働する SaaS アプリを開発。",
-     "TARGET_REJECTED", "NONE"),
+     "TARGET_UNCERTAIN", "CLOUD_APP_DEV"),
     ("ITエンジニア", "jobContentOutline: 業務システムを開発。\n"
-     "targetMemberDetail: AWS と Terraform の経験を歓迎。", "TARGET_REJECTED", "NONE"),
+     "targetMemberDetail: AWS と Terraform の経験を歓迎。", "TARGET_UNCERTAIN", "CLOUD_APP_DEV"),
 ])
 def test_target_domain_requires_main_duty_evidence(title, jd, status, category):
     result = assess_target_domain(Scout(platform="mynavi", job_title=title, jd_text=jd))
@@ -79,7 +79,7 @@ def test_target_domain_missing_jd_is_uncertain():
         "バックエンドエンジニア",
         "jobContentOutline: Rubyによる新機能開発を主担当。AWSリソース構築と"
         "CI/CD環境の運用にも寄与。",
-        "TARGET_REJECTED", "NONE",
+        "TARGET_UNCERTAIN", "CLOUD_APP_DEV",
     ),
     (
         "ITエンジニア",

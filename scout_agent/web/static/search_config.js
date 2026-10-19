@@ -26,11 +26,11 @@ const SearchConfig = (() => {
   function sources(form) {
     return [...form.querySelectorAll('[name=sources]')].map(input => input.value);
   }
-  function restore(form, limits, renderSources) {
+  function restore(form, limits, renderSources, platformSources = {}) {
     try {
       const data = JSON.parse(sessionStorage.getItem(key));
       if (data && ['green', 'forkwell', 'lapras', 'findy', 'type', 'doda', 'mynavi', 'indeed'].includes(data.platform) && form.elements?.platform) {
-        const labels = data.platform === 'indeed' ? ['インフラエンジニア', 'クラウドエンジニア', 'SRE', 'DevOps'] : ['doda', 'mynavi'].includes(data.platform) ? ['インフラエンジニア'] : data.platform === 'type' ? ['サーバ・クラウド（設計・構築）', 'DevOps・SRE'] : data.platform === 'findy' ? ['おすすめ求人'] : data.platform === 'lapras' ? ['求人検索'] : data.platform === 'forkwell' ? ['求人一覧'] : sources(form);
+        const labels = platformSources[data.platform] || sources(form);
         if (!validate(data, labels, limits)) return;
         form.elements.platform.value = data.platform;
         renderSources?.();

@@ -139,7 +139,7 @@ def test_type_title_prefilter_is_conservative():
                   "Cloud Engineer", "AWS エンジニア", "法人営業／Cloud Engineer", "未知の職種"):
         assert not title_is_clear_non_target((title,))
     assert title_is_clear_non_target(("法人営業",))
-    assert title_is_clear_non_target(("フロントエンドエンジニア",))
+    assert not title_is_clear_non_target(("フロントエンドエンジニア",))
     assert title_is_clear_non_target(("プロジェクトマネージャー",))
     assert not title_is_clear_non_target(("法人営業", "インフラエンジニア"))
 
@@ -206,7 +206,8 @@ def test_type_post_detail_hard_rule_requires_jd_evidence():
     ("初級ITエンジニア", "1ヶ月の研修後にプロジェクトへ配属。案件例：サーバ監視、ヘルプデスク。"),
 ])
 def test_type_detail_local_skip_requires_non_target_primary_duty(title, jd):
-    assert type_detail_local_skip_reason(Scout(platform="type", job_title=title, jd_text=jd))
+    result = type_detail_local_skip_reason(Scout(platform="type", job_title=title, jd_text=jd))
+    assert result is None if "AWS を使用" in jd else bool(result)
 
 
 def test_type_detail_local_skip_keeps_mixed_or_infra_primary_duties():

@@ -13,7 +13,7 @@ from scout_agent.models.scout import Scout
 def test_explanations_use_chinese_while_names_and_terms_stay_original():
     scout = Scout(
         platform="green", company_name="株式会社テスト", job_title="Cloud Engineer",
-        jd_text="AWS / Terraform", scout_text=None,
+        jd_text="AWS 基盤の設計・構築を主担当。Terraform による自動化。", scout_text=None,
     )
     evaluation = MockClassifier().classify(scout)
     assert evaluation.verdict == "KEEP"
